@@ -65,7 +65,7 @@ async def test_start_stop_restart_actions_report_resulting_state(boot_app) -> No
         # Kernel API serving that port's settings.
         alt = panel.data_dir / "configs" / "alt.yaml"
         alt.write_text("mixed-port: 7891\nallow-lan: true\n")
-        panel.app.state.store.register_config("alt", "handwritten")
+        panel.app.state.store.register_config("alt", "hand-written")
         panel.app.state.store.set_active("alt")
         pid_before_restart = panel.app.state.kernel.pid
 
@@ -88,7 +88,7 @@ async def test_killed_kernel_respawns_with_active_config(boot_app) -> None:
         # must pick up the *current* one, not the spawn-time path.
         alt = panel.data_dir / "configs" / "alt.yaml"
         alt.write_text("mixed-port: 7891\nallow-lan: true\n")
-        panel.app.state.store.register_config("alt", "handwritten")
+        panel.app.state.store.register_config("alt", "hand-written")
         panel.app.state.store.set_active("alt")
 
         old_pid = panel.app.state.kernel.pid
