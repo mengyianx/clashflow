@@ -1,6 +1,7 @@
 """Metadata store for ClashFlow's `/data` volume (subscriptions, configs, active record)."""
 
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 CONFIG_KINDS = ("hand-written", "subscription-derived")
@@ -19,6 +20,17 @@ CREATE TABLE IF NOT EXISTS active_config (
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+-- One row per Subscription (ticket #12). The name is both the Subscription
+-- identity and its Subscription-derived Config's name (plan §3); plain
+-- columns keep the table ALTER-TABLE-extensible (ticket #13 adds a
+-- per-Subscription user-agent and interval override).
+CREATE TABLE IF NOT EXISTS subscriptions (
+    name TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    last_refresh_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
 
@@ -42,6 +54,18 @@ class ConfigNotFound(ConfigError):
 class ConfigIsActive(ConfigError):
     def __init__(self, name: str) -> None:
         super().__init__(f"config is active; activate another config before deleting: {name}")
+        self.name = name
+
+
+class SubscriptionAlreadyExists(ConfigError):
+    def __init__(self, name: str) -> None:
+        super().__init__(f"subscription already registered: {name}")
+        self.name = name
+
+
+class SubscriptionNotFound(ConfigError):
+    def __init__(self, name: str) -> None:
+        super().__init__(f"no such subscription: {name}")
         self.name = name
 
 
@@ -132,6 +156,52 @@ class MetadataStore:
         self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
         self._conn.commit()
 
+    def create_subscription(self, name: str, url: str) -> None:
+        """Register a new Subscription; duplicate names are refused. The name
+        doubles as the Subscription-derived Config's name (plan §3)."""
+        validate_config_name(name)
+        try:
+            self._conn.execute("INSERT INTO subscriptions (name, url) VALUES (?, ?)", (name, url))
+        except sqlite3.IntegrityError as exc:
+            raise SubscriptionAlreadyExists(name) from exc
+        self._conn.commit()
+
+    def get_subscription(self, name: str) -> dict[str, str | None]:
+        row = self._conn.execute(
+            "SELECT name, url, last_refresh_at, last_error FROM subscriptions WHERE name = ?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            raise SubscriptionNotFound(name)
+        return _subscription_entry(row)
+
+    def list_subscriptions(self) -> list[dict[str, str | None]]:
+        rows = self._conn.execute(
+            "SELECT name, url, last_refresh_at, last_error FROM subscriptions"
+            " ORDER BY created_at, name"
+        ).fetchall()
+        return [_subscription_entry(row) for row in rows]
+
+    def remove_subscription(self, name: str) -> None:
+        cursor = self._conn.execute("DELETE FROM subscriptions WHERE name = ?", (name,))
+        if cursor.rowcount == 0:
+            raise SubscriptionNotFound(name)
+        self._conn.commit()
+
+    def mark_subscription_refreshed(self, name: str) -> None:
+        """Record a successful refresh: stamp the time and clear the failure."""
+        self._conn.execute(
+            "UPDATE subscriptions SET last_refresh_at = ?, last_error = NULL WHERE name = ?",
+            (_utc_now(), name),
+        )
+        self._conn.commit()
+
+    def mark_subscription_failed(self, name: str, reason: str) -> None:
+        """Record a failed refresh; the reason stays until the next success,
+        while `last_refresh_at` keeps the last SUCCESSFUL refresh time."""
+        self._conn.execute("UPDATE subscriptions SET last_error = ? WHERE name = ?", (reason, name))
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()
 
@@ -139,3 +209,27 @@ class MetadataStore:
 def _entry(row: tuple[str, str, int]) -> dict[str, str | bool]:
     name, kind, active = row
     return {"name": name, "kind": kind, "filename": config_filename(name), "active": bool(active)}
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _subscription_entry(row: tuple[str, str, str | None, str | None]) -> dict[str, str | None]:
+    name, url, last_refresh_at, last_error = row
+    # State is derived, never stored: a failure shows until the next success;
+    # a never-refreshed Subscription is "pending", not "ok".
+    if last_error is not None:
+        state = "error"
+    elif last_refresh_at is not None:
+        state = "ok"
+    else:
+        state = "pending"
+    return {
+        "name": name,
+        "url": url,
+        "config": config_filename(name),
+        "state": state,
+        "last_refresh_at": last_refresh_at,
+        "last_error": last_error,
+    }

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from clashflow.api.configs import router as configs_router
 from clashflow.api.service import router as service_router
+from clashflow.api.subscriptions import router as subscriptions_router
 from clashflow.apiproxy import router as apiproxy_router
 from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
@@ -131,6 +132,7 @@ def create_app(
     # registry owns /api/panel/*, the Kernel keeps /api/configs.
     app.include_router(configs_router)
     app.include_router(service_router)
+    app.include_router(subscriptions_router)
     # Panel routers stay above the /api reverse proxy: an explicit panel route
     # always shadows the proxy (see clashflow/apiproxy.py routing convention).
     app.include_router(ui_router)
