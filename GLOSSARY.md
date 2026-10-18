@@ -17,12 +17,16 @@ The bundled metacubexd web interface used for runtime operations against the Ker
 _Avoid_: dashboard
 
 **Subscription**:
-A remote URL that yields proxy nodes, fetched by ClashFlow to produce a Config.
+A remote URL that yields a complete mihomo YAML Config; ClashFlow fetches it to refresh exactly one Config.
 _Avoid_: sub, feed
 
 **Config**:
 A mihomo YAML configuration file managed by ClashFlow; the active Config determines the Kernel's behavior.
 _Avoid_: profile
+
+**Active Config**:
+The single Config the Kernel is currently running.
+_Avoid_: current config
 
 **Service Control**:
 ClashFlow's authority over the Kernel process lifecycle and over applying a Config to it.
