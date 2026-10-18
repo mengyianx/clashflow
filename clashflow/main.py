@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from clashflow.api.configs import router as configs_router
 from clashflow.api.service import router as service_router
 from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
@@ -34,7 +35,7 @@ def _ensure_default_config(store: MetadataStore, configs_dir: Path) -> str:
     config_file = configs_dir / f"{DEFAULT_CONFIG_NAME}.yaml"
     if not config_file.exists():
         config_file.write_text(DEFAULT_CONFIG_BODY)
-    store.register_config(DEFAULT_CONFIG_NAME, "handwritten")
+    store.register_config(DEFAULT_CONFIG_NAME, "hand-written")
     if store.get_active() is None:
         store.set_active(DEFAULT_CONFIG_NAME)
     return store.get_active() or DEFAULT_CONFIG_NAME
@@ -82,6 +83,7 @@ def create_app(
         configs_dir = _ensure_layout(resolved_data)
         store = MetadataStore(resolved_data / "clashflow.db")
         app.state.store = store
+        app.state.configs_dir = configs_dir
         active = _ensure_default_config(store, configs_dir)
         secret = _resolve_secret(store)
         app.state.secret = secret
@@ -109,6 +111,9 @@ def create_app(
             store.close()
 
     app = FastAPI(title="ClashFlow", lifespan=lifespan)
+    # Panel routers register before the Controller reverse proxy (#14): the
+    # registry owns /api/panel/*, the Kernel keeps /api/configs.
+    app.include_router(configs_router)
     app.include_router(service_router)
     app.mount("/", StaticFiles(directory=web_dist, html=True, check_dir=False), name="web")
     return app

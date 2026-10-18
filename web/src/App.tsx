@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ConfigsPage } from "./ConfigsPage";
 
 type Health = {
   kernel: string;
@@ -85,6 +86,7 @@ export function App() {
           </>
         )}
       </section>
+      <ConfigsPage />
     </main>
   );
 }
