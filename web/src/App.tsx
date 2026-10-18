@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
-type Health = { kernel: string; active_config: string };
+type Health = {
+  kernel: string;
+  state: string;
+  respawns: number;
+  active_config: string;
+};
 
 // Navigation shell: later tickets add real pages (Configs, Subscriptions,
 // Editor) here as routes, keeping this file's structure.
@@ -30,6 +35,17 @@ export function App() {
     };
   }, []);
 
+  // Service Control actions: report the resulting Kernel state, then re-poll.
+  const runAction = async (action: "start" | "stop" | "restart") => {
+    try {
+      await fetch(`/api/service/${action}`, { method: "POST" });
+      const resp = await fetch("/api/service/health");
+      if (resp.ok) setHealth((await resp.json()) as Health);
+    } catch {
+      setHealth(null);
+    }
+  };
+
   return (
     <main style={{ fontFamily: "system-ui", margin: "2rem auto", maxWidth: 480 }}>
       <h1>ClashFlow</h1>
@@ -49,6 +65,24 @@ export function App() {
             Kernel: <strong>{health.kernel}</strong> · Active Config:{" "}
             <strong>{health.active_config}</strong>
           </p>
+        )}
+        {health !== null && (
+          <>
+            <p>
+              State:{" "}
+              <strong style={{ color: health.state === "degraded" ? "red" : undefined }}>
+                {health.state}
+              </strong>
+              {health.state === "respawning" && ` (respawn ${health.respawns})`}
+              {health.state === "degraded" &&
+                " — Kernel crash loop gave up; start it again from here"}
+            </p>
+            <p>
+              <button onClick={() => void runAction("start")}>Start</button>{" "}
+              <button onClick={() => void runAction("stop")}>Stop</button>{" "}
+              <button onClick={() => void runAction("restart")}>Restart</button>
+            </p>
+          </>
         )}
       </section>
     </main>
