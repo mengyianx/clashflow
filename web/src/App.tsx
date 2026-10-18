@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ConfigsPage } from "./ConfigsPage";
 import { EditorPage } from "./EditorPage";
+import { SubscriptionsPage } from "./SubscriptionsPage";
 
 type Health = {
   kernel: string;
@@ -95,6 +96,7 @@ export function App() {
         )}
       </section>
       <ConfigsPage onEdit={setEditing} />
+      <SubscriptionsPage />
       {editing !== null && <EditorPage key={editing} configName={editing} />}
     </main>
   );
