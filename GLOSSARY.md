@@ -32,6 +32,10 @@ _Avoid_: current config
 A Config not backed by any Subscription; its content belongs to the user and is never rewritten by a refresh.
 _Avoid_: manual config, custom config
 
+**Subscription-derived Config**:
+A Config owned by exactly one Subscription; every refresh rewrites it verbatim.
+_Avoid_: subscription config
+
 **Controller**:
 mihomo's external-controller REST/WebSocket API, the channel for runtime operations and for applying a Config.
 _Avoid_: 9090 API
