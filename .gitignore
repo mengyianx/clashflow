@@ -43,6 +43,9 @@ htmlcov/
 Thumbs.db
 desktop.ini
 
+# Node / web frontend
+node_modules/
+
 # Logs
 *.log
 logs/
