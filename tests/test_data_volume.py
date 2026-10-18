@@ -1,4 +1,18 @@
+import time
+from pathlib import Path
+
 import httpx
+
+
+def _wait_for(path: Path, timeout: float = 5.0) -> None:
+    # The Kernel flushes cache.db asynchronously after startup; wait for the
+    # state to land in the volume instead of assuming an exact instant.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.is_file():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"{path} did not appear within {timeout}s")
 
 
 async def test_data_volume_layout_survives_recreation(boot_app, tmp_path) -> None:
@@ -11,7 +25,7 @@ async def test_data_volume_layout_survives_recreation(boot_app, tmp_path) -> Non
         # §3 layout: metadata DB, configs/, Kernel cache under the one volume.
         assert (data / "clashflow.db").is_file()
         assert (data / "configs" / "default.yaml").is_file()
-        assert (data / "cache.db").is_file()
+        _wait_for(data / "cache.db")
         default_yaml = (data / "configs" / "default.yaml").read_text()
 
     # Kernel from the first boot is stopped with the app; Controller is gone.
