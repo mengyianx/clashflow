@@ -17,6 +17,7 @@ from clashflow.api.service import router as service_router
 from clashflow.apiproxy import router as apiproxy_router
 from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
+from clashflow.ui import router as ui_router
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ def create_app(
     data_dir: Path | None = None,
     kernel_bin: str | None = None,
     web_dist: Path | None = None,
+    ui_dist: Path | None = None,
     boot_timeout: float = 10.0,
 ) -> FastAPI:
     resolved_data = data_dir or Path(os.environ.get("CLASHFLOW_DATA_DIR", "/data"))
@@ -79,6 +81,9 @@ def create_app(
         web_dist = (
             Path(env_dist) if env_dist else Path(__file__).resolve().parent.parent / "web" / "dist"
         )
+    if ui_dist is None:
+        env_ui = os.environ.get("CLASHFLOW_UI_DIST")
+        ui_dist = Path(env_ui) if env_ui else Path(__file__).resolve().parent.parent / "metacubexd"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -123,7 +128,11 @@ def create_app(
     app.include_router(service_router)
     # Panel routers stay above the /api reverse proxy: an explicit panel route
     # always shadows the proxy (see clashflow/apiproxy.py routing convention).
+    app.include_router(ui_router)
     app.include_router(apiproxy_router)
+    # Runtime Dashboard (metacubexd static bundle); /ui/config.js is served by
+    # clashflow.ui.router, which shadows this mount's upstream copy.
+    app.mount("/ui", StaticFiles(directory=str(ui_dist), html=True, check_dir=False), name="ui")
     app.mount("/", StaticFiles(directory=web_dist, html=True, check_dir=False), name="web")
     return app
 

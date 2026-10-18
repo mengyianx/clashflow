@@ -36,6 +36,23 @@ def mihomo_bin() -> str:
     return _locate_kernel()
 
 
+@pytest.fixture(scope="session")
+def metacubexd_dist() -> Path:
+    env = os.environ.get("CLASHFLOW_UI_DIST")
+    if env and (Path(env) / "index.html").is_file():
+        return Path(env)
+    repo_bundle = REPO_ROOT / "metacubexd"
+    if (repo_bundle / "index.html").is_file():
+        return repo_bundle
+    for candidate in sorted(Path.home().glob(".cache/clashflow/ui-*/dist")):
+        if (candidate / "index.html").is_file():
+            return candidate
+    pytest.fail(
+        "metacubexd bundle not found: run scripts/fetch-ui.sh (or set CLASHFLOW_UI_DIST)",
+        pytrace=False,
+    )
+
+
 BootApp = Callable[..., AbstractAsyncContextManager[Panel]]
 
 
@@ -47,6 +64,7 @@ def boot_app(mihomo_bin: str, tmp_path_factory: pytest.TempPathFactory) -> BootA
         data_dir: Path | None = None,
         kernel_bin: str | None = None,
         web_dist: Path | None = None,
+        ui_dist: Path | None = None,
         config_body: str | None = None,
     ) -> AsyncIterator[Panel]:
         from clashflow.main import create_app
@@ -59,6 +77,7 @@ def boot_app(mihomo_bin: str, tmp_path_factory: pytest.TempPathFactory) -> BootA
             data_dir=data,
             kernel_bin=kernel_bin or mihomo_bin,
             web_dist=web_dist,
+            ui_dist=ui_dist,
         )
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
