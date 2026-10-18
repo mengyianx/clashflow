@@ -8,10 +8,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from clashflow.api.service import router as service_router
+from clashflow.apiproxy import router as apiproxy_router
 from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
 
@@ -85,6 +87,9 @@ def create_app(
         active = _ensure_default_config(store, configs_dir)
         secret = _resolve_secret(store)
         app.state.secret = secret
+        # Shared upstream client for the /api reverse proxy (clashflow.apiproxy).
+        api_client = httpx.AsyncClient(trust_env=False, timeout=httpx.Timeout(30.0))
+        app.state.api_client = api_client
 
         manager = KernelManager(resolved_kernel, resolved_data)
         app.state.kernel = manager
@@ -105,11 +110,15 @@ def create_app(
             yield
         finally:
             supervisor.cancel()
+            await api_client.aclose()
             manager.stop()
             store.close()
 
     app = FastAPI(title="ClashFlow", lifespan=lifespan)
     app.include_router(service_router)
+    # Panel routers stay above the /api reverse proxy: an explicit panel route
+    # always shadows the proxy (see clashflow/apiproxy.py routing convention).
+    app.include_router(apiproxy_router)
     app.mount("/", StaticFiles(directory=web_dist, html=True, check_dir=False), name="web")
     return app
 
