@@ -10,6 +10,13 @@ Filename derivation: the server assigns `<name>.yaml` under `/data/configs`
 Empty Config semantics: creation writes the YAML empty mapping `{}`, which
 the pinned Kernel (v1.19.32) loads as a defaults-only config — a zero-byte
 file is refused by the Kernel ("configuration file … is empty").
+
+Blank template semantics (ticket #11): `POST` with `template: true` writes
+the minimal skeleton (`mixed-port: 7890`, `allow-lan: true`) instead, so a
+new Hand-written Config is immediately runnable when made Active. Copy
+(`/copy`) duplicates ANY Config's bytes into a new Hand-written Config
+through the same validate + atomic-swap pipeline; the copy is a fully
+independent file that refreshes never touch.
 """
 
 import logging
@@ -41,6 +48,13 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 EMPTY_CONFIG_BODY = "{}\n"
+# The blank template for new Hand-written Configs (ticket #11): the plan's
+# minimal skeleton (§5) — a mixed proxy port and allow-lan, nothing else.
+# It is NOT the boot template in clashflow.main.DEFAULT_CONFIG_BODY: that
+# one additionally carries geo-auto-update/geo-update-interval because the
+# Kernel's GEO updater ticker can only register at process start, which
+# belongs to the boot path, not to every new Config.
+TEMPLATE_CONFIG_BODY = "mixed-port: 7890\nallow-lan: true\n"
 
 type ConfigEntry = dict[str, str | bool]
 
@@ -48,6 +62,13 @@ type ConfigEntry = dict[str, str | bool]
 class NewConfig(BaseModel):
     name: str
     kind: str = DEFAULT_CONFIG_KIND
+    # true = write the blank template skeleton; false (default) = the YAML
+    # empty mapping, the established empty-Config semantics from ticket #9.
+    template: bool = False
+
+
+class CopyConfig(BaseModel):
+    name: str
 
 
 def _configs_dir(request: Request) -> Path:
@@ -72,7 +93,7 @@ async def create_config(request: Request, body: NewConfig) -> ConfigEntry:
         # roll the fresh registration back.
         request.app.state.store.remove_config(body.name)
         raise HTTPException(status_code=409, detail=f"config file already exists: {path.name}")
-    path.write_text(EMPTY_CONFIG_BODY)
+    path.write_text(TEMPLATE_CONFIG_BODY if body.template else EMPTY_CONFIG_BODY)
     log.info("created config %s (%s)", body.name, body.kind)
     return {
         "name": body.name,
@@ -85,6 +106,49 @@ async def create_config(request: Request, body: NewConfig) -> ConfigEntry:
 @router.get("/api/panel/configs")
 async def list_configs(request: Request) -> list[ConfigEntry]:
     return request.app.state.store.list_configs()
+
+
+@router.post("/api/panel/configs/{name}/copy", status_code=201)
+async def copy_config(request: Request, name: str, body: CopyConfig) -> ConfigEntry:
+    """Copy ANY existing Config (Hand-written or Subscription-derived) into
+    a NEW Hand-written Config: same content, separate name and file, fully
+    independent — refreshes touch only the Config they own, so the copy is
+    the escape hatch for editing a Subscription-derived Config safely. The
+    content is written through the save pipeline (validate + atomic swap)
+    exactly like the source file itself; an invalid source is refused with
+    the Kernel's error verbatim and nothing is created."""
+    try:
+        validate_config_name(body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    store = request.app.state.store
+    try:
+        store.get_config(name)
+    except ConfigNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    source = _configs_dir(request) / config_filename(name)
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail=f"config file missing: {source.name}")
+    target = _configs_dir(request) / config_filename(body.name)
+    try:
+        store.create_config(body.name, DEFAULT_CONFIG_KIND)
+    except ConfigAlreadyExists as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if target.exists():
+        # A stale file under a free name: refuse instead of clobbering, and
+        # roll the fresh registration back.
+        store.remove_config(body.name)
+        raise HTTPException(status_code=409, detail=f"config file already exists: {target.name}")
+    kernel: KernelManager = request.app.state.kernel
+    try:
+        await atomic_save(kernel.binary, kernel.data_dir, target, source.read_bytes())
+    except KernelRejected as exc:
+        store.remove_config(body.name)
+        raise HTTPException(status_code=400, detail=exc.output) from exc
+    log.info("copied config %s -> %s", name, body.name)
+    return store.get_config(body.name)
 
 
 @router.get("/api/panel/configs/{name}")
