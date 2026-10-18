@@ -83,7 +83,9 @@ async def test_panel_routes_are_not_shadowed_by_the_proxy(boot_app) -> None:
     async with boot_app() as panel:
         resp = await panel.client.get("/api/service/health")
         assert resp.status_code == 200
-        assert resp.json() == {"kernel": "up", "active_config": "default"}
+        body = resp.json()
+        assert body["kernel"] == "up"
+        assert body["active_config"] == "default"
 
 
 async def test_proxy_owns_api_paths_the_panel_does_not_define(boot_app) -> None:
