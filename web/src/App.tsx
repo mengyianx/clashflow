@@ -66,6 +66,11 @@ export function App() {
             <strong>{health.active_config}</strong>
           </p>
         )}
+        {/* Runtime Dashboard entry (plan §4): the embedded metacubexd bundle. */}
+        <p>
+          <a href="/ui/">Open the Runtime Dashboard</a> — nodes, delay tests, connections, traffic,
+          logs
+        </p>
         {health !== null && (
           <>
             <p>
