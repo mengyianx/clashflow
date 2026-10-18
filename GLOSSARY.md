@@ -28,6 +28,14 @@ _Avoid_: profile
 The single Config the Kernel is currently running.
 _Avoid_: current config
 
+**Hand-written Config**:
+A Config not backed by any Subscription; its content belongs to the user and is never rewritten by a refresh.
+_Avoid_: manual config, custom config
+
+**Controller**:
+mihomo's external-controller REST/WebSocket API, the channel for runtime operations and for applying a Config.
+_Avoid_: 9090 API
+
 **Service Control**:
 ClashFlow's authority over the Kernel process lifecycle and over applying a Config to it.
 _Avoid_: service management
