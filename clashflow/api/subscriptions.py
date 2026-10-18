@@ -19,6 +19,7 @@ reason (`last_error`) for the next scheduled retry (#13).
 
 import logging
 from pathlib import Path
+from typing import cast
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -41,7 +42,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-type SubscriptionEntry = dict[str, str | None]
+type SubscriptionEntry = dict[str, str | int | None]
 
 
 class NewSubscription(BaseModel):
@@ -49,10 +50,30 @@ class NewSubscription(BaseModel):
     url: str
 
 
+class SubscriptionSettings(BaseModel):
+    # Fetch settings (ticket #13), partial-update semantics on PATCH: a
+    # field ABSENT from the request keeps its stored value; an explicit null
+    # clears the column back to the documented default fallback.
+    user_agent: str | None = None
+    update_interval_minutes: int | None = None
+
+
 def _validate_url(url: str) -> str:
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"subscription URL must be http(s): {url!r}")
     return url
+
+
+def _validate_user_agent(user_agent: str) -> str:
+    """A custom UA must survive the HTTP round trip: non-empty once
+    trimmed, no control characters (CR/LF would break the header line).
+    The stored value is the trimmed one."""
+    stripped = user_agent.strip()
+    if not stripped:
+        raise ValueError("user agent must not be empty")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in stripped):
+        raise ValueError(f"user agent must not contain control characters: {user_agent!r}")
+    return stripped
 
 
 @router.post("/api/panel/subscriptions", status_code=201)
@@ -121,8 +142,8 @@ async def refresh_subscription_endpoint(request: Request, name: str) -> Subscrip
     except (SubscriptionNotFound, ConfigNotFound) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     target = request.app.state.configs_dir / config_filename(name)
-    url = entry["url"]
-    assert url is not None  # the url column is NOT NULL
+    url = cast("str", entry["url"])  # the url column is NOT NULL
+    user_agent = cast("str | None", entry["user_agent"])
     try:
         await refresh_subscription(
             kernel,
@@ -131,6 +152,7 @@ async def refresh_subscription_endpoint(request: Request, name: str) -> Subscrip
             url,
             target,
             apply_when_active=bool(active),
+            user_agent=user_agent,
         )
     except SubscriptionFetchError as exc:
         store.mark_subscription_failed(name, str(exc))
@@ -143,6 +165,49 @@ async def refresh_subscription_endpoint(request: Request, name: str) -> Subscrip
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     store.mark_subscription_refreshed(name)
     log.info("refreshed subscription %s", name)
+    return store.get_subscription(name)
+
+
+@router.patch("/api/panel/subscriptions/{name}")
+async def update_subscription_settings(
+    request: Request, name: str, body: SubscriptionSettings
+) -> SubscriptionEntry:
+    """Fetch settings (ticket #13): partial update of the per-Subscription
+    `user_agent` (sent on every fetch of this Subscription; null clears it
+    back to the module default) and `update_interval_minutes` (positive
+    minutes; the per-Subscription override of the global default interval
+    for #16's scheduler; null clears the override). Fields absent from the
+    request keep their stored value."""
+    store: MetadataStore = request.app.state.store
+    try:
+        current = store.get_subscription(name)
+    except SubscriptionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        if "user_agent" in body.model_fields_set:
+            user_agent = (
+                _validate_user_agent(body.user_agent) if body.user_agent is not None else None
+            )
+        else:
+            user_agent = cast("str | None", current["user_agent"])
+        if "update_interval_minutes" in body.model_fields_set:
+            if body.update_interval_minutes is not None and body.update_interval_minutes < 1:
+                raise ValueError(
+                    "update interval must be a positive number of minutes: "
+                    f"{body.update_interval_minutes}"
+                )
+            update_interval_minutes = body.update_interval_minutes
+        else:
+            update_interval_minutes = cast("int | None", current["update_interval_minutes"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    store.set_subscription_fetch_settings(name, user_agent, update_interval_minutes)
+    log.info(
+        "updated subscription fetch settings %s (ua=%r interval=%r)",
+        name,
+        user_agent,
+        update_interval_minutes,
+    )
     return store.get_subscription(name)
 
 
