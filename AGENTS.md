@@ -1,3 +1,7 @@
+## Branch layout
+
+Project work (domain docs, plan, source) lives on `dev`; `main` stays a bare skeleton. Task branches base on `dev`, PRs target `dev` (`gh pr create --base dev`). `main` is off-limits: no commits, no pushes, no PRs against it.
+
 ## Agent skills
 
 ### Issue tracker
