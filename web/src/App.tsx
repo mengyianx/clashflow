@@ -97,7 +97,7 @@ export function App() {
       </section>
       <ConfigsPage onEdit={setEditing} />
       <SubscriptionsPage />
-      {editing !== null && <EditorPage key={editing} configName={editing} />}
+      {editing !== null && <EditorPage key={editing} configName={editing} onOpen={setEditing} />}
     </main>
   );
 }

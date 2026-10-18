@@ -23,8 +23,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 -- One row per Subscription (ticket #12). The name is both the Subscription
 -- identity and its Subscription-derived Config's name (plan §3); plain
--- columns keep the table ALTER-TABLE-extensible (ticket #13 adds a
--- per-Subscription user-agent and interval override).
+-- columns keep the table ALTER-TABLE-extensible.
 CREATE TABLE IF NOT EXISTS subscriptions (
     name TEXT PRIMARY KEY,
     url TEXT NOT NULL,
@@ -33,6 +32,18 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
+
+# Additive schema for `subscriptions` (ticket #13), applied with
+# ALTER TABLE ... ADD COLUMN after the base schema. NULL is the documented
+# fallback: NULL user_agent -> the module default UA on fetches,
+# NULL update_interval_minutes -> the global default interval (plan §1: 24h,
+# DEFAULT_UPDATE_INTERVAL_MINUTES in clashflow.refresh, consumed by #16's
+# scheduler). Later tickets APPEND to this tuple — never edit _SCHEMA's
+# CREATE TABLE body, databases from earlier tickets migrate in place.
+_ADDITIVE_SUBSCRIPTION_COLUMNS = (
+    "user_agent TEXT",
+    "update_interval_minutes INTEGER",
+)
 
 
 class ConfigError(Exception):
@@ -88,6 +99,10 @@ class MetadataStore:
     def __init__(self, db_path: Path) -> None:
         self._conn = sqlite3.connect(db_path)
         self._conn.executescript(_SCHEMA)
+        existing = {row[1] for row in self._conn.execute("PRAGMA table_info(subscriptions)")}
+        for column in _ADDITIVE_SUBSCRIPTION_COLUMNS:
+            if column.split()[0] not in existing:
+                self._conn.execute(f"ALTER TABLE subscriptions ADD COLUMN {column}")
         self._conn.commit()
 
     def register_config(self, name: str, kind: str) -> None:
@@ -166,21 +181,31 @@ class MetadataStore:
             raise SubscriptionAlreadyExists(name) from exc
         self._conn.commit()
 
-    def get_subscription(self, name: str) -> dict[str, str | None]:
+    def get_subscription(self, name: str) -> dict[str, str | int | None]:
         row = self._conn.execute(
-            "SELECT name, url, last_refresh_at, last_error FROM subscriptions WHERE name = ?",
+            _SELECT_SUBSCRIPTION + " WHERE name = ?",
             (name,),
         ).fetchone()
         if row is None:
             raise SubscriptionNotFound(name)
         return _subscription_entry(row)
 
-    def list_subscriptions(self) -> list[dict[str, str | None]]:
-        rows = self._conn.execute(
-            "SELECT name, url, last_refresh_at, last_error FROM subscriptions"
-            " ORDER BY created_at, name"
-        ).fetchall()
+    def list_subscriptions(self) -> list[dict[str, str | int | None]]:
+        rows = self._conn.execute(_SELECT_SUBSCRIPTION + " ORDER BY created_at, name").fetchall()
         return [_subscription_entry(row) for row in rows]
+
+    def set_subscription_fetch_settings(
+        self, name: str, user_agent: str | None, update_interval_minutes: int | None
+    ) -> None:
+        """Persist the per-Subscription fetch settings (ticket #13); None
+        clears the column back to its documented default fallback."""
+        cursor = self._conn.execute(
+            "UPDATE subscriptions SET user_agent = ?, update_interval_minutes = ? WHERE name = ?",
+            (user_agent, update_interval_minutes, name),
+        )
+        if cursor.rowcount == 0:
+            raise SubscriptionNotFound(name)
+        self._conn.commit()
 
     def remove_subscription(self, name: str) -> None:
         cursor = self._conn.execute("DELETE FROM subscriptions WHERE name = ?", (name,))
@@ -206,6 +231,12 @@ class MetadataStore:
         self._conn.close()
 
 
+_SELECT_SUBSCRIPTION = (
+    "SELECT name, url, last_refresh_at, last_error, user_agent, update_interval_minutes"
+    " FROM subscriptions"
+)
+
+
 def _entry(row: tuple[str, str, int]) -> dict[str, str | bool]:
     name, kind, active = row
     return {"name": name, "kind": kind, "filename": config_filename(name), "active": bool(active)}
@@ -215,8 +246,10 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _subscription_entry(row: tuple[str, str, str | None, str | None]) -> dict[str, str | None]:
-    name, url, last_refresh_at, last_error = row
+def _subscription_entry(
+    row: tuple[str, str, str | None, str | None, str | None, int | None],
+) -> dict[str, str | int | None]:
+    name, url, last_refresh_at, last_error, user_agent, update_interval_minutes = row
     # State is derived, never stored: a failure shows until the next success;
     # a never-refreshed Subscription is "pending", not "ok".
     if last_error is not None:
@@ -232,4 +265,8 @@ def _subscription_entry(row: tuple[str, str, str | None, str | None]) -> dict[st
         "state": state,
         "last_refresh_at": last_refresh_at,
         "last_error": last_error,
+        # Fetch settings (ticket #13): NULL = the documented default
+        # fallback (module default UA; global default interval for #16).
+        "user_agent": user_agent,
+        "update_interval_minutes": update_interval_minutes,
     }
