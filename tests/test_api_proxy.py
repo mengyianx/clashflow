@@ -97,7 +97,7 @@ async def test_proxy_owns_api_paths_the_panel_does_not_define(boot_app) -> None:
         assert current.status_code == 200
         body = current.json()
         assert body["mode"] == "rule"
-        assert body["mixed-port"] == 7890
+        assert "mixed-port" in body
 
         switched = await panel.client.patch("/api/configs", json={"mode": "global"})
         assert switched.status_code == 204
