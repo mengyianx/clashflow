@@ -18,6 +18,14 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from clashflow.apply import (
+    ConfigFileMissing,
+    HotApplyError,
+    KernelRejected,
+    atomic_save,
+    hot_apply,
+    validate_config,
+)
 from clashflow.db import (
     DEFAULT_CONFIG_KIND,
     ConfigAlreadyExists,
@@ -26,6 +34,7 @@ from clashflow.db import (
     config_filename,
     validate_config_name,
 )
+from clashflow.kernel import KernelManager
 
 log = logging.getLogger(__name__)
 
@@ -78,15 +87,75 @@ async def list_configs(request: Request) -> list[ConfigEntry]:
     return request.app.state.store.list_configs()
 
 
-@router.put("/api/panel/configs/{name}/active")
-async def set_active_config(request: Request, name: str) -> ConfigEntry:
-    """Record the Active Config; the Kernel (re)start picks it up (ticket #10
-    wires the validate + hot-apply pipeline behind this seam)."""
+@router.get("/api/panel/configs/{name}")
+async def get_config_content(request: Request, name: str) -> dict[str, str | bool]:
+    """The Editor read side: the registered entry plus the raw file content
+    verbatim (the file is the source of truth; the panel never rewrites it)."""
     try:
-        request.app.state.store.activate_config(name)
+        entry = request.app.state.store.get_config(name)
     except ConfigNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return request.app.state.store.get_config(name)
+    path = _configs_dir(request) / config_filename(name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"config file missing: {path.name}")
+    return {**entry, "content": path.read_text()}
+
+
+@router.put("/api/panel/configs/{name}")
+async def save_config(request: Request, name: str) -> ConfigEntry:
+    """Validate the raw YAML body with the Kernel config-test, atomically swap
+    it into the Config's file, and hot-apply it when this Config is Active
+    (same process, no restart). On validation failure the stored file stays
+    byte-identical and the Kernel's error output is returned verbatim."""
+    store = request.app.state.store
+    try:
+        entry = store.get_config(name)
+    except ConfigNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    target = _configs_dir(request) / config_filename(name)
+    kernel: KernelManager = request.app.state.kernel
+    content = await request.body()
+    try:
+        await atomic_save(kernel.binary, kernel.data_dir, target, content)
+    except KernelRejected as exc:
+        raise HTTPException(status_code=400, detail=exc.output) from exc
+    if entry["active"] and kernel.alive():
+        await _hot_apply_or_502(request, target)
+    log.info("saved config %s (%d bytes)", name, len(content))
+    return store.get_config(name)
+
+
+@router.put("/api/panel/configs/{name}/active")
+async def set_active_config(request: Request, name: str) -> ConfigEntry:
+    """Switch the Active Config through the apply pipeline: validate the
+    target file, hot-apply it, and record the new Active ONLY on success — on
+    failure the previous Active stays recorded and running. A stopped Kernel
+    records the choice for the next (re)start instead of hot-applying."""
+    store = request.app.state.store
+    try:
+        store.get_config(name)
+    except ConfigNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    target = _configs_dir(request) / config_filename(name)
+    kernel: KernelManager = request.app.state.kernel
+    try:
+        await validate_config(kernel.binary, kernel.data_dir, target)
+    except ConfigFileMissing as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except KernelRejected as exc:
+        raise HTTPException(status_code=400, detail=exc.output) from exc
+    if kernel.alive():
+        await _hot_apply_or_502(request, target)
+    store.activate_config(name)
+    log.info("switched Active Config to %s", name)
+    return store.get_config(name)
+
+
+async def _hot_apply_or_502(request: Request, target: Path) -> None:
+    try:
+        await hot_apply(request.app.state.api_client, request.app.state.secret, target)
+    except HotApplyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.delete("/api/panel/configs/{name}")

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ConfigsPage } from "./ConfigsPage";
+import { EditorPage } from "./EditorPage";
 
 type Health = {
   kernel: string;
@@ -8,12 +9,14 @@ type Health = {
   active_config: string;
 };
 
-// Navigation shell: later tickets add real pages (Configs, Subscriptions,
-// Editor) here as routes, keeping this file's structure.
+// Navigation shell: later tickets add real pages (Subscriptions) here as
+// routes, keeping this file's structure. The Editor opens from the Configs
+// page ("Edit") for a picked Config.
 const NAV_ITEMS = ["Overview", "Configs", "Subscriptions"];
 
 export function App() {
   const [health, setHealth] = useState<Health | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,7 +94,8 @@ export function App() {
           </>
         )}
       </section>
-      <ConfigsPage />
+      <ConfigsPage onEdit={setEditing} />
+      {editing !== null && <EditorPage key={editing} configName={editing} />}
     </main>
   );
 }

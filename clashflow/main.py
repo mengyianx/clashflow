@@ -22,9 +22,14 @@ from clashflow.ui import router as ui_router
 log = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_NAME = "default"
+# The panel-authored boot template (written once when the file is absent;
+# existing files are never rewritten — ADR-0001). GEO auto-update ships
+# enabled here: the Kernel's updater ticker registers at process start only.
 DEFAULT_CONFIG_BODY = """\
 mixed-port: 7890
 allow-lan: true
+geo-auto-update: true
+geo-update-interval: 24
 """
 
 
