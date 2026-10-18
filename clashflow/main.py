@@ -88,6 +88,11 @@ def create_app(
 
         manager = KernelManager(resolved_kernel, resolved_data)
         app.state.kernel = manager
+
+        def active_config_path() -> Path:
+            return configs_dir / f"{store.get_active() or DEFAULT_CONFIG_NAME}.yaml"
+
+        supervisor = manager.supervise(active_config_path, secret)
         try:
             manager.start(configs_dir / f"{active}.yaml", secret)
         except OSError as exc:
@@ -99,6 +104,7 @@ def create_app(
         try:
             yield
         finally:
+            supervisor.cancel()
             manager.stop()
             store.close()
 
