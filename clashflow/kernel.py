@@ -41,6 +41,18 @@ class KernelManager:
             return self._proc.pid
         return None
 
+    @property
+    def binary(self) -> str:
+        """The mihomo binary this manager spawns; the apply pipeline runs the
+        same binary for `mihomo -t` validation."""
+        return self._bin
+
+    @property
+    def data_dir(self) -> Path:
+        """The Kernel home dir (`-d`); validation reuses it so GEO downloads
+        and caches land in the data volume."""
+        return self._data_dir
+
     def active_config_path(self) -> Path:
         if self._active_config is None:
             raise RuntimeError("kernel is not supervised")

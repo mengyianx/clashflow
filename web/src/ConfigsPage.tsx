@@ -9,9 +9,9 @@ type ConfigEntry = {
 
 // Configs page (ticket #9): list registered Configs with the Active one
 // marked, create empty Configs, delete them, and choose the Active Config.
-// Choosing takes effect on the next Kernel (re)start; the validate +
-// hot-apply pipeline arrives with ticket #10.
-export function ConfigsPage() {
+// Switching now validates + hot-applies through the save pipeline (ticket
+// #10); "Edit" opens the raw-YAML Editor for a Config.
+export function ConfigsPage({ onEdit }: { onEdit?: (name: string) => void }) {
   const [configs, setConfigs] = useState<ConfigEntry[] | null>(null);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +102,7 @@ export function ConfigsPage() {
                       <button onClick={() => void setActive(config.name)}>Set active</button>{" "}
                     </>
                   )}
+                  <button onClick={() => onEdit?.(config.name)}>Edit</button>{" "}
                   <button disabled={config.active} onClick={() => void remove(config.name)}>
                     Delete
                   </button>
