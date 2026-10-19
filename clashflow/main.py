@@ -20,6 +20,7 @@ from clashflow.auth import AuthMiddleware, SessionRegistry
 from clashflow.auth import router as auth_router
 from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
+from clashflow.scheduler import SubscriptionScheduler
 from clashflow.ui import router as ui_router
 
 log = logging.getLogger(__name__)
@@ -136,9 +137,15 @@ def create_app(
             ready = await _wait_ready(manager, secret, boot_timeout)
             log.info("kernel %s", "ready" if ready else "failed to become ready")
 
+        # Subscription auto-refresh scheduler (plan §5 flow 1, ticket #16):
+        # starts with the panel, stops with it like the supervisor.
+        scheduler = SubscriptionScheduler(store, manager, api_client, secret, configs_dir)
+        scheduler.start()
+
         try:
             yield
         finally:
+            scheduler.stop()
             supervisor.cancel()
             await api_client.aclose()
             manager.stop()
