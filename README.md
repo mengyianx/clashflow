@@ -4,6 +4,12 @@
 
 ## 快速开始（从零到可用）
 
+GHCR 上的镜像包继承仓库的可见性：仓库为私有时镜像同样是私有的，拉取前先登录（PAT 需带 `read:packages` 权限）。
+
+```bash
+printf '%s' "$GHCR_PAT" | docker login ghcr.io -u <GitHub 用户名> --password-stdin
+```
+
 ```bash
 docker run -d --name clashflow --restart unless-stopped \
   -e CLASHFLOW_PASSWORD='换成你的面板密码' \
@@ -50,8 +56,8 @@ docker run -d --name clashflow --restart unless-stopped \
 
 - **配置管理**：多配置并存（每订阅一份派生配置 + 任意手编配置，全局唯一名）。保存 = `mihomo -t` 校验 → 原子替换 →（Active 时）热载，不重启内核；切换 Active 走同一校验+热载管线，成功才记录。订阅派生配置可手改，但编辑器会警示“下次刷新将覆盖”，并提供一键“复制为手编配置”。
 - **订阅管理**：URL 导入恰生成一份订阅派生配置，刷新只重写它自己；手动 / 定时刷新（全局默认 24h，每订阅可覆盖间隔与 UA）；失败保留旧配置、标红原因（网络/非法 YAML/校验错误分类可见），下一轮自动重试，成功即清除。
-- **服务控制**：启动 / 停止 / 重启，状态一目了然（`up` / `respawning` / `down` / `degraded`）；内核意外退出按指数退避自动拉起（始终以当前 Active Config）；GEO 自动更新由内核内置调度负责（默认模板已开启）。
-- **运行面板**：内嵌 metacubexd（`/ui/`），开箱连接，profile 管理面在静态模式下自动隐藏。
+- **服务控制**：启动 / 停止 / 重启，状态一目了然（`up` / `respawning` / `down` / `degraded`）；内核意外退出按指数退避自动拉起（始终以当前 Active Config）；GEO 自动更新由内核内置调度负责（默认模板与空白模板均已开启）。
+- **运行面板**：内嵌 metacubexd（`/ui/`，即上游 metacubexd dashboard），开箱连接，其 Profile 管理面（上游 metacubexd 功能）在静态模式下自动隐藏。
 - **安全面**：面板密码 + 服务端会话 cookie（HttpOnly，登出即吊销）；API secret 只在服务端注入反代；Controller 仅回环监听。
 
 ## 冒烟自检（对应实现规划 M1–M5）
@@ -78,13 +84,13 @@ curl -s http://127.0.0.1:8080/healthz        # {"status": "ok"}
 docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t clashflow:local .
 ```
 
-CI（`.github/workflows/ci.yml`）在每次 push 上运行 lint / type-check / 测试，并用 buildx 构建推送多架构镜像到 GHCR（`ghcr.io/<owner>/<repo>`，分支与 commit SHA 标签）。
+CI（`.github/workflows/ci.yml`）在每次 push 上运行 lint / type-check / 测试，并用 buildx 构建推送多架构镜像到 GHCR（`ghcr.io/<owner>/<repo>`，分支与 commit SHA 标签；推送到集成分支 `flow` 时额外打 `latest` 标签，即快速开始引用的那个）。
 
 ## 限制与折衷（v1 明确取舍）
 
 - 面板纯 HTTP：LAN 明文传输，密码 / cookie 理论上可被同网嗅探——家用场景的明确折衷（见 `docs/adr/0002-runtime-api-via-backend-proxy.md`）。
 - 单用户；不做 TUN / 透明网关；代理端口对 LAN 免认证。
 - 订阅只接受完整 mihomo YAML（不做 subconverter、Age 解密、节点过滤）。
-- 配置内容原样归属用户 / 供应商（`docs/adr/0001-config-ownership-verbatim-yaml.md`）：面板从不改写既有 YAML，没有覆写 / 合并层。
+- 配置内容原样归属用户 / 供应商（`docs/adr/0001-config-ownership-verbatim-yaml.md`）：面板从不改写既有 YAML，没有覆写 / 合并层。订阅内容按 ADR-0001 原样使用——供应商 YAML 里没有 `geo-auto-update` 时 GEO 自动更新不会由面板补写，需要请在订阅内容里自行加上该键。
 - `mihomo -t` 校验有联网副作用：配置引用的 GEO 缺失时会尝试下载，下载失败判校验失败。
 - 会话保存在面板进程内存：重启面板后需重新登录。

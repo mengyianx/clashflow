@@ -5,6 +5,7 @@ actually loads is observed through the pinned Controller and real proxying.
 """
 
 import httpx
+from conftest import origin_server
 
 EMPTY_CONFIG_BODY = "{}\n"
 
@@ -78,25 +79,7 @@ async def test_config_list_shows_every_config_and_marks_the_active_one(boot_app)
 
 
 async def test_setting_active_and_restarting_runs_that_config(boot_app) -> None:
-    import http.server
-    import socketserver
-    import threading
-
-    class OriginHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            body = b"clashflow-alt-config-ok"
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    origin = socketserver.TCPServer(("127.0.0.1", 0), OriginHandler)
-    threading.Thread(target=origin.serve_forever, daemon=True).start()
-    origin_port = origin.server_address[1]
-    try:
+    with origin_server(b"clashflow-alt-config-ok") as origin:
         async with boot_app() as panel:
             secret = panel.app.state.secret
             resp = await panel.client.post("/api/panel/configs", json={"name": "alt"})
@@ -125,19 +108,16 @@ async def test_setting_active_and_restarting_runs_that_config(boot_app) -> None:
 
             # Observable through proxy behavior: traffic flows on alt's port…
             async with httpx.AsyncClient(proxy="http://127.0.0.1:7891") as proxied:
-                via_alt = await proxied.get(f"http://127.0.0.1:{origin_port}/")
+                via_alt = await proxied.get(f"http://127.0.0.1:{origin.port}/")
             assert via_alt.status_code == 200
             assert via_alt.content == b"clashflow-alt-config-ok"
             # …and the default Config's port is gone.
             try:
                 async with httpx.AsyncClient(proxy="http://127.0.0.1:7890") as proxied:
-                    await proxied.get(f"http://127.0.0.1:{origin_port}/")
+                    await proxied.get(f"http://127.0.0.1:{origin.port}/")
                 raise AssertionError("default Config port 7890 still proxying")
             except httpx.ConnectError:
                 pass
-    finally:
-        origin.shutdown()
-        origin.server_close()
 
 
 async def test_deleting_the_active_config_is_refused(boot_app) -> None:

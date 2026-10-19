@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { reportFailure } from "./api";
 
 type SubscriptionEntry = {
   name: string;
@@ -45,15 +46,8 @@ export function SubscriptionsPage() {
     void load();
   }, [load]);
 
-  const reportFailure = async (resp: Response) => {
-    let detail = `request failed (${resp.status})`;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      // keep the generic message
-    }
-    setError(detail);
+  const report = async (resp: Response) => {
+    setError(await reportFailure(resp));
   };
 
   const add = async () => {
@@ -67,7 +61,7 @@ export function SubscriptionsPage() {
       setUrl("");
       await load();
     } else {
-      await reportFailure(resp);
+      await report(resp);
     }
   };
 
@@ -77,7 +71,7 @@ export function SubscriptionsPage() {
       { method: "POST" }
     );
     if (resp.ok) await load();
-    else await reportFailure(resp);
+    else await report(resp);
   };
 
   const remove = async (subName: string) => {
@@ -85,7 +79,7 @@ export function SubscriptionsPage() {
       method: "DELETE",
     });
     if (resp.ok) await load();
-    else await reportFailure(resp);
+    else await report(resp);
   };
 
   const draftFor = (sub: SubscriptionEntry) =>
@@ -140,7 +134,7 @@ export function SubscriptionsPage() {
       setError(null);
       await load();
     } else {
-      await reportFailure(resp);
+      await report(resp);
     }
   };
 

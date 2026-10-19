@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { reportFailure } from "./api";
 
 type ConfigEntry = {
   name: string;
@@ -35,15 +36,8 @@ export function ConfigsPage({ onEdit }: { onEdit?: (name: string) => void }) {
     void load();
   }, [load]);
 
-  const reportFailure = async (resp: Response) => {
-    let detail = `request failed (${resp.status})`;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      // keep the generic message
-    }
-    setError(detail);
+  const report = async (resp: Response) => {
+    setError(await reportFailure(resp));
   };
 
   const create = async (template: boolean) => {
@@ -56,7 +50,7 @@ export function ConfigsPage({ onEdit }: { onEdit?: (name: string) => void }) {
       setName("");
       await load();
     } else {
-      await reportFailure(resp);
+      await report(resp);
     }
   };
 
@@ -72,7 +66,7 @@ export function ConfigsPage({ onEdit }: { onEdit?: (name: string) => void }) {
       body: JSON.stringify({ name: target }),
     });
     if (resp.ok) await load();
-    else await reportFailure(resp);
+    else await report(resp);
   };
 
   const setActive = async (configName: string) => {
@@ -80,7 +74,7 @@ export function ConfigsPage({ onEdit }: { onEdit?: (name: string) => void }) {
       method: "PUT",
     });
     if (resp.ok) await load();
-    else await reportFailure(resp);
+    else await report(resp);
   };
 
   const remove = async (configName: string) => {
@@ -88,7 +82,7 @@ export function ConfigsPage({ onEdit }: { onEdit?: (name: string) => void }) {
       method: "DELETE",
     });
     if (resp.ok) await load();
-    else await reportFailure(resp);
+    else await report(resp);
   };
 
   return (

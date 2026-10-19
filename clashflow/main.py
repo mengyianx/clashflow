@@ -151,7 +151,12 @@ def create_app(
             manager.stop()
             store.close()
 
-    app = FastAPI(title="ClashFlow", lifespan=lifespan)
+    # Ticket #17 AC1 (access-surface lock-down): FastAPI's built-in docs are
+    # not part of the Management Panel surface (the UI never links them), so
+    # /docs, /redoc and /openapi.json are not served at all.
+    app = FastAPI(
+        title="ClashFlow", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+    )
     # Auth (#17): pure-ASGI guard around every surface (http + WebSocket
     # scopes); registered first, wraps routers and static mounts alike.
     app.add_middleware(AuthMiddleware)

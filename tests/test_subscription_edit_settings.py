@@ -11,51 +11,11 @@ deterministic and offline. UI rendering of the warning and the copy button is
 covered by a real-browser check (see the ticket report), not here.
 """
 
-import contextlib
-import http.server
-import socketserver
-import threading
-from types import SimpleNamespace
-from typing import Any
+from conftest import origin_server
 
 SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
 SUB_V2 = b"mixed-port: 7893\nallow-lan: true\n"
 DEFAULT_USER_AGENT = "ClashFlow/0.1"
-
-
-@contextlib.contextmanager
-def subscription_server(body: bytes):
-    """Local origin standing in for a Subscription provider: the served body
-    can be changed in place and every request's User-Agent is recorded."""
-
-    state: dict[str, Any] = {"body": body, "user_agents": []}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            state["user_agents"].append(self.headers.get("User-Agent"))
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(state["body"])))
-            self.end_headers()
-            self.wfile.write(state["body"])
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-
-    def stop() -> None:
-        server.shutdown()
-        server.server_close()
-
-    origin = SimpleNamespace(
-        url=f"http://127.0.0.1:{server.server_address[1]}/subscription",
-        state=state,
-    )
-    try:
-        yield origin
-    finally:
-        stop()
 
 
 async def _add_subscription(panel, name: str, url: str):
@@ -69,7 +29,7 @@ async def test_opening_the_editor_for_a_subscription_derived_config_marks_it_for
     # marking the overwrite warning keys off; a Hand-written Config carries
     # kind=hand-written, so the warning must not render for it.
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
         derived = (await panel.client.get("/api/panel/configs/prov")).json()
         assert derived["kind"] == "subscription-derived"
@@ -87,7 +47,7 @@ async def test_the_editor_copy_to_hand_written_flow_creates_an_independent_confi
     # the next refresh rewrites only the Subscription-derived Config and
     # never touches the copy.
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             copy = await panel.client.post(
                 "/api/panel/configs/prov/copy", json={"name": "prov-copy"}
@@ -114,7 +74,7 @@ async def test_a_custom_user_agent_is_sent_on_that_subscriptions_fetches_and_the
     # User-Agent header the provider receives on that Subscription's next
     # fetch; without one, the documented default ClashFlow/0.1 is sent.
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             assert origin.state["user_agents"] == [DEFAULT_USER_AGENT]
 
@@ -138,7 +98,7 @@ async def test_a_custom_user_agent_is_sent_on_that_subscriptions_fetches_and_the
 
         # A Subscription without a custom UA keeps sending the default on
         # every fetch, not only the first.
-        with subscription_server(SUB_V1) as plain:
+        with origin_server(SUB_V1) as plain:
             assert (await _add_subscription(panel, "plain", plain.url)).status_code == 201
             assert (
                 await panel.client.post("/api/panel/subscriptions/plain/refresh")
@@ -154,7 +114,7 @@ async def test_the_update_interval_override_round_trips_through_the_subscription
     # MINUTES, round-trips through get + list under the documented field name
     # `update_interval_minutes`, and NULL means "use the global default".
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
 
         entry = (await panel.client.get("/api/panel/subscriptions")).json()[0]

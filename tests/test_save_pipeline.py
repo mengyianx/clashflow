@@ -6,43 +6,17 @@ through its Controller API and through real proxy traffic.
 """
 
 import asyncio
-import contextlib
-import http.server
 import re
-import socketserver
 import subprocess
-import threading
 
 import httpx
+from conftest import origin_server
 
 CONTROLLER = "http://127.0.0.1:9090"
 
 
 def _auth(secret: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {secret}"}
-
-
-@contextlib.contextmanager
-def origin_server(body: bytes):
-    """Local HTTP origin used to observe which proxy port actually serves."""
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        yield server.server_address[1]
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 async def _controller_configs(secret: str) -> dict:
@@ -78,15 +52,15 @@ async def test_saving_valid_edit_to_active_config_hot_applies_without_restart(bo
         assert configs["mixed-port"] == 7891
 
         # Observable through proxy behavior: traffic flows on the new port...
-        with origin_server(b"clashflow-save-ok") as origin_port:
+        with origin_server(b"clashflow-save-ok") as origin:
             async with httpx.AsyncClient(proxy="http://127.0.0.1:7891") as proxied:
-                via_new = await proxied.get(f"http://127.0.0.1:{origin_port}/")
+                via_new = await proxied.get(f"http://127.0.0.1:{origin.port}/")
             assert via_new.status_code == 200
             assert via_new.content == b"clashflow-save-ok"
             # ...and the old port is gone.
             try:
                 async with httpx.AsyncClient(proxy="http://127.0.0.1:7890") as proxied:
-                    await proxied.get(f"http://127.0.0.1:{origin_port}/")
+                    await proxied.get(f"http://127.0.0.1:{origin.port}/")
                 raise AssertionError("old port 7890 still proxying")
             except httpx.ConnectError:
                 pass
@@ -206,13 +180,13 @@ async def test_switching_active_config_hot_applies_and_records_without_restart(b
         assert health["kernel"] == "up"
 
         # Runtime behavior followed: the new port serves, the old one is gone.
-        with origin_server(b"clashflow-switch-ok") as origin_port:
+        with origin_server(b"clashflow-switch-ok") as origin:
             async with httpx.AsyncClient(proxy="http://127.0.0.1:7891") as proxied:
-                via_alt = await proxied.get(f"http://127.0.0.1:{origin_port}/")
+                via_alt = await proxied.get(f"http://127.0.0.1:{origin.port}/")
             assert via_alt.content == b"clashflow-switch-ok"
             try:
                 async with httpx.AsyncClient(proxy="http://127.0.0.1:7890") as proxied:
-                    await proxied.get(f"http://127.0.0.1:{origin_port}/")
+                    await proxied.get(f"http://127.0.0.1:{origin.port}/")
                 raise AssertionError("default Config port 7890 still proxying")
             except httpx.ConnectError:
                 pass

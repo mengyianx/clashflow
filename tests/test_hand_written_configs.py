@@ -4,45 +4,20 @@ Assertions stay at the Management Panel HTTP API seam; the pinned Kernel is
 a real fixture observed through its Controller API and real proxy traffic.
 """
 
-import contextlib
-import http.server
-import socketserver
-import threading
-
 import httpx
+from conftest import origin_server
 
 CONTROLLER = "http://127.0.0.1:9090"
 
 # The blank template skeleton, per the implementation plan (§5): a mixed
-# proxy port and allow-lan, nothing else.
-TEMPLATE_SKELETON = "mixed-port: 7890\nallow-lan: true\n"
+# proxy port, allow-lan, and the GEO auto-update keys (US21).
+TEMPLATE_SKELETON = (
+    "mixed-port: 7890\nallow-lan: true\ngeo-auto-update: true\ngeo-update-interval: 24\n"
+)
 
 
 def _auth(secret: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {secret}"}
-
-
-@contextlib.contextmanager
-def origin_server(body: bytes):
-    """Local HTTP origin used to observe which proxy port actually serves."""
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        yield server.server_address[1]
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 async def _controller_configs(secret: str) -> dict:
@@ -95,9 +70,9 @@ async def test_template_creation_yields_a_valid_config_that_passes_validation_an
         # Observable through proxy behavior: the template's mixed port
         # serves traffic (an empty `{}` Config would leave no listener).
         assert (await _controller_configs(secret))["mixed-port"] == 7890
-        with origin_server(b"clashflow-template-ok") as origin_port:
+        with origin_server(b"clashflow-template-ok") as origin:
             async with httpx.AsyncClient(proxy="http://127.0.0.1:7890") as proxied:
-                via_fresh = await proxied.get(f"http://127.0.0.1:{origin_port}/")
+                via_fresh = await proxied.get(f"http://127.0.0.1:{origin.port}/")
             assert via_fresh.status_code == 200
             assert via_fresh.content == b"clashflow-template-ok"
 

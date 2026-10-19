@@ -24,8 +24,9 @@ from typing import cast
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from clashflow.apply import HotApplyError, KernelRejected
+from clashflow.apply import KernelRejected
 from clashflow.db import (
+    SUBSCRIPTION_DERIVED_KIND,
     ConfigAlreadyExists,
     ConfigIsActive,
     ConfigNotFound,
@@ -36,7 +37,12 @@ from clashflow.db import (
     validate_config_name,
 )
 from clashflow.kernel import KernelManager
-from clashflow.refresh import SubscriptionFetchError, refresh_subscription
+from clashflow.refresh import (
+    REFRESH_FAILURES,
+    SubscriptionFetchError,
+    mark_subscription_refresh_failed,
+    refresh_subscription,
+)
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +85,7 @@ def _validate_user_agent(user_agent: str) -> str:
 @router.post("/api/panel/subscriptions", status_code=201)
 async def add_subscription(request: Request, body: NewSubscription) -> SubscriptionEntry:
     """Add a Subscription by URL: fetch it, register the pair (Subscription +
-    `kind=subscription-derived` Config), and store the fetched bytes verbatim
+    its Subscription-derived Config), and store the fetched bytes verbatim
     through the apply pipeline. ANY failure rolls both records back and
     creates nothing."""
     store: MetadataStore = request.app.state.store
@@ -99,7 +105,7 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
     except SubscriptionAlreadyExists as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
-        store.create_config(body.name, "subscription-derived")
+        store.create_config(body.name, SUBSCRIPTION_DERIVED_KIND)
     except (ConfigAlreadyExists, ValueError) as exc:
         store.remove_subscription(body.name)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -154,15 +160,12 @@ async def refresh_subscription_endpoint(request: Request, name: str) -> Subscrip
             apply_when_active=bool(active),
             user_agent=user_agent,
         )
-    except SubscriptionFetchError as exc:
-        store.mark_subscription_failed(name, str(exc))
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except KernelRejected as exc:
-        store.mark_subscription_failed(name, exc.output)
-        raise HTTPException(status_code=400, detail=exc.output) from exc
-    except HotApplyError as exc:
-        store.mark_subscription_failed(name, str(exc))
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except REFRESH_FAILURES as exc:
+        detail = mark_subscription_refresh_failed(store, name, exc)
+        # KernelRejected carries the Kernel's own output and maps to 400;
+        # network and hot-apply refusals map to 502.
+        status = 400 if isinstance(exc, KernelRejected) else 502
+        raise HTTPException(status_code=status, detail=detail) from exc
     store.mark_subscription_refreshed(name)
     log.info("refreshed subscription %s", name)
     return store.get_subscription(name)

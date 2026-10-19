@@ -40,7 +40,7 @@ async def test_ui_loads_the_runtime_dashboard_preset_to_the_panel_proxy_without_
         assert "controlToken" not in config.text
 
 
-async def test_dashboard_endpoints_resolve_through_the_panel_proxy(
+async def test_runtime_dashboard_endpoints_resolve_through_the_panel_proxy(
     boot_app: BootApp, metacubexd_dist: Path
 ) -> None:
     """Wiring only: the base preset in the *served* deploy config resolves
@@ -62,7 +62,8 @@ async def test_dashboard_endpoints_resolve_through_the_panel_proxy(
 async def test_profile_management_stays_hidden_in_static_mode(
     boot_app: BootApp, metacubexd_dist: Path
 ) -> None:
-    """The dashboard gates its profile-management UI (and Control Center) on
+    """The upstream metacubexd dashboard gates its Profile management UI (an
+    upstream metacubexd feature; and Control Center) on
     `hasFeature('profiles') = hasAgent && features.includes('profiles')`, where
     `hasAgent` comes from `GET <page origin>/api/control/info` — any failure
     (v1.273.1 useControlInfo: catch -> hasAgent=false, features=[]) hides the

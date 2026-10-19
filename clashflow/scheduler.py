@@ -37,12 +37,12 @@ from typing import cast
 
 import httpx
 
-from clashflow.apply import HotApplyError, KernelRejected
 from clashflow.db import MetadataStore, config_filename
 from clashflow.kernel import KernelManager
 from clashflow.refresh import (
     DEFAULT_UPDATE_INTERVAL_MINUTES,
-    SubscriptionFetchError,
+    REFRESH_FAILURES,
+    mark_subscription_refresh_failed,
     refresh_subscription,
 )
 
@@ -123,17 +123,9 @@ class SubscriptionScheduler:
                 apply_when_active=bool(active),
                 user_agent=user_agent,
             )
-        except SubscriptionFetchError as exc:
-            self._store.mark_subscription_failed(name, str(exc))
-            log.warning("scheduled refresh of subscription %s failed: %s", name, exc)
-            return
-        except KernelRejected as exc:
-            self._store.mark_subscription_failed(name, exc.output)
-            log.warning("scheduled refresh of subscription %s failed: %s", name, exc.output)
-            return
-        except HotApplyError as exc:
-            self._store.mark_subscription_failed(name, str(exc))
-            log.warning("scheduled refresh of subscription %s failed: %s", name, exc)
+        except REFRESH_FAILURES as exc:
+            reason = mark_subscription_refresh_failed(self._store, name, exc)
+            log.warning("scheduled refresh of subscription %s failed: %s", name, reason)
             return
         self._store.mark_subscription_refreshed(name)
         log.info("scheduled refresh updated subscription %s", name)

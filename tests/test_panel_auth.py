@@ -9,15 +9,11 @@ authentication (plan §1), and `GET /healthz` stays an unauthenticated
 liveness surface for the container HEALTHCHECK.
 """
 
-import contextlib
-import http.server
 import json
-import socketserver
-import threading
 
 import httpx
 import pytest
-from conftest import TEST_PANEL_PASSWORD, lan_ip
+from conftest import TEST_PANEL_PASSWORD, lan_ip, origin_server
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -30,29 +26,6 @@ SUB_BODY = b"mixed-port: 7892\nallow-lan: true\n"
 def anon_client(app) -> httpx.AsyncClient:
     """An unauthenticated panel client (fresh cookie jar) at the ASGI seam."""
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://panel")
-
-
-@contextlib.contextmanager
-def subscription_server(body: bytes = SUB_BODY):
-    """Local origin standing in for a Subscription provider."""
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}/sub"
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 # --- Startup: CLASHFLOW_PASSWORD is REQUIRED (plan §2 contract table) ---
@@ -122,6 +95,21 @@ async def test_healthz_stays_an_unauthenticated_liveness_surface(boot_app) -> No
             resp = await anon.get("/healthz")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+
+async def test_fastapi_builtin_docs_surfaces_are_not_served(boot_app) -> None:
+    # Ticket #17 AC1: FastAPI's built-in docs are not part of the Management
+    # Panel surface (the UI never links them), so /docs, /redoc and
+    # /openapi.json must not be served at all — 404 for any client,
+    # authenticated or not.
+    async with boot_app() as panel:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=panel.app), base_url="http://panel"
+        ) as anon:
+            for path in ("/docs", "/redoc", "/openapi.json"):
+                assert (await anon.get(path)).status_code == 404, path
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert (await panel.client.get(path)).status_code == 404, path
 
 
 # --- Login: password checking and cookie flags ---
@@ -206,9 +194,9 @@ async def test_after_login_all_panel_flows_work_through_the_session(boot_app) ->
             assert removed.status_code == 200
 
             # Subscriptions: add, refresh, fetch settings.
-            with subscription_server() as url:
+            with origin_server(SUB_BODY) as origin:
                 added = await client.post(
-                    "/api/panel/subscriptions", json={"name": "sub1", "url": url}
+                    "/api/panel/subscriptions", json={"name": "sub1", "url": origin.url}
                 )
                 assert added.status_code == 201
                 refreshed = await client.post("/api/panel/subscriptions/sub1/refresh")
@@ -271,21 +259,7 @@ async def test_logout_invalidates_the_session_and_replay_is_rejected(boot_app) -
 
 
 async def test_proxy_port_serves_lan_clients_without_any_authentication(boot_app) -> None:
-    class OriginHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            body = b"clashflow-anon-ok"
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    origin = socketserver.TCPServer(("127.0.0.1", 0), OriginHandler)
-    threading.Thread(target=origin.serve_forever, daemon=True).start()
-    origin_port = origin.server_address[1]
-    try:
+    with origin_server(b"clashflow-anon-ok") as origin:
         async with boot_app() as panel:
             # The same unauthenticated client is refused by the panel...
             async with httpx.AsyncClient(
@@ -296,9 +270,6 @@ async def test_proxy_port_serves_lan_clients_without_any_authentication(boot_app
             # ...yet the proxy port carries its traffic with no credential.
             host = lan_ip()
             async with httpx.AsyncClient(proxy=f"http://{host}:7890") as proxied:
-                via_lan = await proxied.get(f"http://127.0.0.1:{origin_port}/")
+                via_lan = await proxied.get(f"http://127.0.0.1:{origin.port}/")
             assert via_lan.status_code == 200
             assert via_lan.content == b"clashflow-anon-ok"
-    finally:
-        origin.shutdown()
-        origin.server_close()

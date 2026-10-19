@@ -22,8 +22,9 @@ router = APIRouter()
 # page's own origin (REST and WebSocket alike). No credential is served: the
 # endpoint stays secretless and clashflow.apiproxy injects the Kernel secret
 # server-side. Omitting `controlToken` (the upstream all-in-one server's agent
-# credential) keeps the dashboard in static mode: its
-# `GET /api/control/info` probe fails, hiding profile management.
+# credential) keeps the upstream metacubexd dashboard in static mode: its
+# `GET /api/control/info` probe fails, hiding its Profile management (the
+# upstream metacubexd feature).
 DEPLOY_CONFIG = """\
 // ClashFlow: embedded Runtime Dashboard reaching the Kernel through the
 // panel's own /api reverse proxy (secret injected server-side).

@@ -6,6 +6,10 @@ from pathlib import Path
 
 CONFIG_KINDS = ("hand-written", "subscription-derived")
 DEFAULT_CONFIG_KIND = "hand-written"
+# The kind every Subscription add registers its Config with (one Subscription
+# owns exactly one Subscription-derived Config); named so sibling code never
+# hard-codes the literal.
+SUBSCRIPTION_DERIVED_KIND = "subscription-derived"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS configs (

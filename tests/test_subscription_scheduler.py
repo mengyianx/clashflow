@@ -9,17 +9,13 @@ the metadata store — no test waits a real interval or sleeps blind.
 """
 
 import asyncio
-import contextlib
-import http.server
-import socketserver
-import threading
 import time
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
+from conftest import origin_server
 
 SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
 SUB_V2 = b"mixed-port: 7893\nallow-lan: true\n"
@@ -28,33 +24,6 @@ SUB_PLAIN_V2 = b"mixed-port: 7894\nallow-lan: true\n"
 # rejected, so the scheduled refresh fails as the validation-error class and
 # the previous Config must survive byte-identical.
 SUB_INVALID_YAML = b"proxies: [\n"
-
-
-@contextlib.contextmanager
-def subscription_server(body: bytes):
-    """Local origin standing in for a Subscription provider: the served body
-    can be changed in place, and every request's User-Agent is recorded."""
-
-    state: dict[str, Any] = {"body": body, "user_agents": []}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            state["user_agents"].append(self.headers.get("User-Agent"))
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(state["body"])))
-            self.end_headers()
-            self.wfile.write(state["body"])
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        yield SimpleNamespace(url=f"http://127.0.0.1:{server.server_address[1]}/sub", state=state)
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 async def _add_subscription(panel, name: str, url: str) -> httpx.Response:
@@ -103,7 +72,7 @@ async def test_a_short_interval_subscription_refreshes_on_a_scheduler_tick_witho
     # the Subscription's custom user agent on the scheduled fetch.
     monkeypatch.setenv("CLASHFLOW_SCHEDULER_TICK_SECONDS", "0.05")
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             patched = await panel.client.patch(
                 "/api/panel/subscriptions/prov",
@@ -141,7 +110,7 @@ async def test_a_failing_scheduled_refresh_keeps_the_old_config_and_error_marker
     # once the provider recovers, the success clears the marker.
     monkeypatch.setenv("CLASHFLOW_SCHEDULER_TICK_SECONDS", "0.05")
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             patched = await panel.client.patch(
                 "/api/panel/subscriptions/prov", json={"update_interval_minutes": 1}
@@ -185,8 +154,8 @@ async def test_a_subscription_without_an_interval_override_follows_the_global_de
     monkeypatch.setenv("CLASHFLOW_SCHEDULER_TICK_SECONDS", "0.05")
     async with boot_app() as panel:
         with (
-            subscription_server(SUB_V1) as plain_origin,
-            subscription_server(SUB_V1) as over_origin,
+            origin_server(SUB_V1) as plain_origin,
+            origin_server(SUB_V1) as over_origin,
         ):
             assert (await _add_subscription(panel, "plain", plain_origin.url)).status_code == 201
             assert (await _add_subscription(panel, "over", over_origin.url)).status_code == 201

@@ -102,7 +102,7 @@ async def proxy_websocket(websocket: WebSocket, path: str) -> None:
     if query:
         url += "?" + urlencode(query)
     try:
-        kernel = await websockets.connect(
+        controller = await websockets.connect(
             url,
             additional_headers={"Authorization": f"Bearer {secret}"},
             open_timeout=5,
@@ -113,34 +113,34 @@ async def proxy_websocket(websocket: WebSocket, path: str) -> None:
         return
     await websocket.accept()
     try:
-        await _relay(websocket, kernel)
+        await _relay(websocket, controller)
     finally:
-        await kernel.close()
+        await controller.close()
 
 
-async def _relay(browser: WebSocket, kernel: ClientConnection) -> None:
+async def _relay(browser: WebSocket, controller: ClientConnection) -> None:
     """Pump frames both ways; finish when either side stops."""
 
-    async def browser_to_kernel() -> None:
+    async def browser_to_controller() -> None:
         while True:
             message = await browser.receive()
             if message["type"] == "websocket.disconnect":
                 return
             if message.get("text") is not None:
-                await kernel.send(message["text"])
+                await controller.send(message["text"])
             elif message.get("bytes") is not None:
-                await kernel.send(message["bytes"])
+                await controller.send(message["bytes"])
 
-    async def kernel_to_browser() -> None:
-        async for message in kernel:
+    async def controller_to_browser() -> None:
+        async for message in controller:
             if isinstance(message, str):
                 await browser.send_text(message)
             else:
                 await browser.send_bytes(message)
 
     pumps: set[asyncio.Task[None]] = {
-        asyncio.create_task(browser_to_kernel()),
-        asyncio.create_task(kernel_to_browser()),
+        asyncio.create_task(browser_to_controller()),
+        asyncio.create_task(controller_to_browser()),
     }
     try:
         await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
@@ -148,8 +148,9 @@ async def _relay(browser: WebSocket, kernel: ClientConnection) -> None:
         for pump in pumps:
             pump.cancel()
         await asyncio.gather(*pumps, return_exceptions=True)
-    # Surface the Kernel's stream end to the browser; the browser may have
-    # disconnected first, in which case there is nothing left to close.
+    # Surface the Controller connection's stream end to the browser; the
+    # browser may have disconnected first, in which case there is nothing
+    # left to close.
     try:
         await browser.close(code=1011)
     except RuntimeError:

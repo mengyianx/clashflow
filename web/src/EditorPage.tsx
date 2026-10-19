@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { reportFailure } from "./api";
 
 type ConfigContent = {
   name: string;
@@ -28,15 +29,8 @@ export function EditorPage({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  const reportFailure = async (resp: Response) => {
-    let detail = `request failed (${resp.status})`;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      // keep the generic message
-    }
-    setError(detail);
+  const report = async (resp: Response) => {
+    setError(await reportFailure(resp));
     setSaved(false);
   };
 
@@ -51,7 +45,7 @@ export function EditorPage({
         setError(null);
         setSaved(false);
       } else {
-        await reportFailure(resp);
+        await report(resp);
       }
     } catch {
       setError("panel unreachable");
@@ -81,7 +75,7 @@ export function EditorPage({
         return;
       }
       if (resp.status !== 409) {
-        await reportFailure(resp);
+        await report(resp);
         return;
       }
     }
@@ -102,7 +96,7 @@ export function EditorPage({
         setError(null);
         setSaved(true);
       } else {
-        await reportFailure(resp);
+        await report(resp);
       }
     } catch {
       setError("panel unreachable");

@@ -12,11 +12,11 @@ the pinned Kernel (v1.19.32) loads as a defaults-only config — a zero-byte
 file is refused by the Kernel ("configuration file … is empty").
 
 Blank template semantics (ticket #11): `POST` with `template: true` writes
-the minimal skeleton (`mixed-port: 7890`, `allow-lan: true`) instead, so a
-new Hand-written Config is immediately runnable when made Active. Copy
-(`/copy`) duplicates ANY Config's bytes into a new Hand-written Config
-through the same validate + atomic-swap pipeline; the copy is a fully
-independent file that refreshes never touch.
+the minimal skeleton (`mixed-port: 7890`, `allow-lan: true`, plus the GEO
+auto-update keys) instead, so a new Hand-written Config is immediately
+runnable when made Active. Copy (`/copy`) duplicates ANY Config's bytes into
+a new Hand-written Config through the same validate + atomic-swap pipeline;
+the copy is a fully independent file that refreshes never touch.
 """
 
 import logging
@@ -49,19 +49,26 @@ router = APIRouter()
 
 EMPTY_CONFIG_BODY = "{}\n"
 # The blank template for new Hand-written Configs (ticket #11): the plan's
-# minimal skeleton (§5) — a mixed proxy port and allow-lan, nothing else.
-# It is NOT the boot template in clashflow.main.DEFAULT_CONFIG_BODY: that
-# one additionally carries geo-auto-update/geo-update-interval because the
-# Kernel's GEO updater ticker can only register at process start, which
-# belongs to the boot path, not to every new Config.
-TEMPLATE_CONFIG_BODY = "mixed-port: 7890\nallow-lan: true\n"
+# minimal skeleton (§5) — a mixed proxy port and allow-lan — plus
+# geo-auto-update/geo-update-interval. US21 wants GEO databases updating
+# automatically, and a Hand-written Config made Active REPLACES the boot
+# Config the Kernel runs — a template without these keys would silently
+# turn GEO auto-update off on every switch. The earlier decision to keep GEO
+# keys out of this template is superseded: panel-AUTHORED template content is
+# not covered by ADR-0001's rewrite ban (that protects user/Subscription-
+# supplied content, which stays verbatim); the boot template in
+# clashflow.main.DEFAULT_CONFIG_BODY carries the same GEO keys.
+TEMPLATE_CONFIG_BODY = (
+    "mixed-port: 7890\nallow-lan: true\ngeo-auto-update: true\ngeo-update-interval: 24\n"
+)
 
 type ConfigEntry = dict[str, str | bool]
 
 
 class NewConfig(BaseModel):
     name: str
-    kind: str = DEFAULT_CONFIG_KIND
+    # The panel API creates Hand-written Configs only; Subscription-derived
+    # Configs are registered by the Subscription add flow, never by the user.
     # true = write the blank template skeleton; false (default) = the YAML
     # empty mapping, the established empty-Config semantics from ticket #9.
     template: bool = False
@@ -83,7 +90,7 @@ async def create_config(request: Request, body: NewConfig) -> ConfigEntry:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     path = _configs_dir(request) / config_filename(body.name)
     try:
-        request.app.state.store.create_config(body.name, body.kind)
+        request.app.state.store.create_config(body.name, DEFAULT_CONFIG_KIND)
     except ConfigAlreadyExists as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -94,10 +101,10 @@ async def create_config(request: Request, body: NewConfig) -> ConfigEntry:
         request.app.state.store.remove_config(body.name)
         raise HTTPException(status_code=409, detail=f"config file already exists: {path.name}")
     path.write_text(TEMPLATE_CONFIG_BODY if body.template else EMPTY_CONFIG_BODY)
-    log.info("created config %s (%s)", body.name, body.kind)
+    log.info("created config %s (%s)", body.name, DEFAULT_CONFIG_KIND)
     return {
         "name": body.name,
-        "kind": body.kind,
+        "kind": DEFAULT_CONFIG_KIND,
         "filename": path.name,
         "active": False,
     }

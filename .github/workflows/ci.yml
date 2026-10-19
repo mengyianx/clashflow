@@ -69,6 +69,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # README quick-start pins :latest; the `latest` tag is produced only on
+      # pushes to the integration branch `flow` (latest=auto would never fire
+      # — there are no tag/semver/match events here).
       - uses: docker/metadata-action@v5
         id: meta
         with:
@@ -76,6 +79,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/flow' }}
 
       # arm/v7 is best-effort (ticket #18): the image matrix is amd64 + arm64,
       # plus arm/v7 while its dependency wheels keep resolving (PyYAML has no

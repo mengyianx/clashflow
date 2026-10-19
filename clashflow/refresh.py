@@ -13,7 +13,9 @@ API layer maps to a status code:
 
 In every failure case the previous Config file stays byte-identical:
 `clashflow.apply.atomic_save` only `os.replace`s after a successful
-config-test.
+config-test, and a Controller refusal on the forced hot-apply (HotApplyError)
+restores the pre-refresh bytes — the Kernel never left the old Config, so
+disk and running state stay consistent.
 """
 
 import logging
@@ -21,7 +23,8 @@ from pathlib import Path
 
 import httpx
 
-from clashflow.apply import atomic_save, hot_apply
+from clashflow.apply import HotApplyError, KernelRejected, atomic_save, hot_apply
+from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
 
 log = logging.getLogger(__name__)
@@ -80,10 +83,35 @@ async def refresh_subscription(
 ) -> None:
     """Fetch and store one Subscription's Config: validate + atomic-swap via
     the shared apply pipeline, then a forced hot-apply when this Config is
-    Active and the Kernel is up. Pipeline exceptions propagate untouched for
-    the API layer to surface verbatim."""
+    Active and the Kernel is up. If that hot-apply is refused, the pre-refresh
+    bytes are restored before re-raising: the Kernel never left the old
+    Config, so the failure classes leave the old Config in place on disk too.
+    Pipeline exceptions propagate untouched for the API layer to surface
+    verbatim."""
     content = await fetch_subscription(client, url, user_agent=user_agent)
+    previous = target.read_bytes() if target.is_file() else None
     await atomic_save(kernel.binary, kernel.data_dir, target, content)
     if apply_when_active and kernel.alive():
-        await hot_apply(client, secret, target)
-    log.info("refreshed subscription config %s (%d bytes)", target.name, len(content))
+        try:
+            await hot_apply(client, secret, target)
+        except HotApplyError:
+            if previous is not None:
+                target.write_bytes(previous)
+            raise
+    log.info("refreshed Subscription-derived Config %s (%d bytes)", target.name, len(content))
+
+
+# The three failure classes of the refresh pipeline (each its own exception),
+# shared by the manual-refresh endpoint and the scheduler so both dispatch on
+# one tuple instead of re-listing the classes.
+REFRESH_FAILURES = (SubscriptionFetchError, KernelRejected, HotApplyError)
+
+
+def mark_subscription_refresh_failed(store: MetadataStore, name: str, exc: Exception) -> str:
+    """One shared dispatch of a refresh failure onto the store: mark the
+    Subscription failed with the failure reason — the Kernel's own output for
+    KernelRejected, the exception text otherwise — and return that reason for
+    the caller to surface (HTTP detail or log line)."""
+    reason = exc.output if isinstance(exc, KernelRejected) else str(exc)
+    store.mark_subscription_failed(name, reason)
+    return reason

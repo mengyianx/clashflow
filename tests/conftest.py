@@ -1,9 +1,14 @@
+import contextlib
+import http.server
 import os
 import shutil
-from collections.abc import AsyncIterator, Callable
+import socketserver
+import threading
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -17,6 +22,50 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TEST_PANEL_PASSWORD = "clashflow-test-panel-password"
 
 type Panel = SimpleNamespace  # app, client, data_dir, password
+
+
+@contextlib.contextmanager
+def origin_server(body: bytes, status: int = 200) -> Iterator[SimpleNamespace]:
+    """Local HTTP origin standing in for a Subscription provider (URL under
+    `/subscription`) or a plain proxy target (`port`): the served body and
+    status can be changed in place via `state`, every request's User-Agent is
+    recorded, and `stop()` kills the listener to simulate a network error.
+    Shared by every test that needs one (previously duplicated per module)."""
+
+    state: dict[str, Any] = {"body": body, "status": status, "user_agents": []}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            state["user_agents"].append(self.headers.get("User-Agent"))
+            self.send_response(state["status"])
+            self.send_header("Content-Length", str(len(state["body"])))
+            self.end_headers()
+            self.wfile.write(state["body"])
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    stopped = False
+
+    def stop() -> None:
+        nonlocal stopped
+        if not stopped:
+            stopped = True
+            server.shutdown()
+            server.server_close()
+
+    origin = SimpleNamespace(
+        url=f"http://127.0.0.1:{server.server_address[1]}/subscription",
+        port=server.server_address[1],
+        state=state,
+        stop=stop,
+    )
+    try:
+        yield origin
+    finally:
+        stop()
 
 
 def _locate_kernel() -> str:

@@ -8,12 +8,11 @@ Kernel validation error) has its own seam test.
 """
 
 import contextlib
-import http.server
 import socket
-import socketserver
-import threading
-from types import SimpleNamespace
-from typing import Any
+
+from conftest import origin_server
+
+from clashflow.apply import HotApplyError
 
 SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
 SUB_V2 = b"mixed-port: 7893\nallow-lan: true\n"
@@ -29,47 +28,6 @@ SUB_INVALID_TYPE = (
 )
 # Unparseable YAML (the invalid-YAML failure class).
 SUB_INVALID_YAML = b"proxies: [\n"
-
-
-@contextlib.contextmanager
-def subscription_server(body: bytes, status: int = 200):
-    """Local origin standing in for a Subscription provider: the served body
-    and status can be changed in place, every request's User-Agent is
-    recorded, and `stop()` kills the listener to simulate a network error."""
-
-    state: dict[str, Any] = {"body": body, "status": status, "user_agents": []}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            state["user_agents"].append(self.headers.get("User-Agent"))
-            self.send_response(state["status"])
-            self.send_header("Content-Length", str(len(state["body"])))
-            self.end_headers()
-            self.wfile.write(state["body"])
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    stopped = False
-
-    def stop() -> None:
-        nonlocal stopped
-        if not stopped:
-            stopped = True
-            server.shutdown()
-            server.server_close()
-
-    origin = SimpleNamespace(
-        url=f"http://127.0.0.1:{server.server_address[1]}/subscription",
-        state=state,
-        stop=stop,
-    )
-    try:
-        yield origin
-    finally:
-        stop()
 
 
 @contextlib.contextmanager
@@ -90,7 +48,7 @@ async def test_adding_a_subscription_creates_exactly_one_subscription_derived_co
     boot_app,
 ) -> None:
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             resp = await _add_subscription(panel, "prov", origin.url)
             assert resp.status_code == 201
             entry = resp.json()
@@ -130,15 +88,15 @@ async def test_adding_a_subscription_creates_exactly_one_subscription_derived_co
             assert collision.status_code == 409
 
 
-async def test_manual_refresh_replaces_only_the_subscription_config_and_keeps_every_other_config_byte_identical(
+async def test_manual_refresh_replaces_only_the_subscription_derived_config_and_keeps_every_other_config_byte_identical(
     boot_app,
 ) -> None:
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             # A second Subscription-derived Config and a Hand-written Config
             # to witness byte-identity.
-            with subscription_server(b"mixed-port: 7895\nallow-lan: true\n") as other:
+            with origin_server(b"mixed-port: 7895\nallow-lan: true\n") as other:
                 assert (await _add_subscription(panel, "other", other.url)).status_code == 201
             assert (
                 await panel.client.post("/api/panel/configs", json={"name": "spare"})
@@ -167,11 +125,11 @@ async def test_manual_refresh_replaces_only_the_subscription_config_and_keeps_ev
             assert list(configs_dir.glob("*.tmp")) == []
 
 
-async def test_refreshing_the_active_subscription_config_hot_applies_without_restart(
+async def test_refreshing_the_active_subscription_derived_config_hot_applies_without_restart(
     boot_app,
 ) -> None:
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             resp = await panel.client.put("/api/panel/configs/prov/active")
             assert resp.status_code == 200
@@ -192,12 +150,46 @@ async def test_refreshing_the_active_subscription_config_hot_applies_without_res
         assert configs.json()["mixed-port"] == 7893
 
 
+async def test_hot_apply_failure_restores_the_previous_subscription_derived_config_and_marks_error(
+    boot_app, monkeypatch
+) -> None:
+    # Failure class: Controller refusal on the forced hot-apply of the
+    # Active Subscription-derived Config. atomic_save has already swapped in
+    # the new bytes when the refusal lands, so the pipeline must restore the
+    # PREVIOUS bytes (no hot-apply — the Kernel never left the old Config)
+    # and keep the failure marking: the old Config stays in place end to end.
+    async with boot_app() as panel:
+        with origin_server(SUB_V1) as origin:
+            assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
+            resp = await panel.client.put("/api/panel/configs/prov/active")
+            assert resp.status_code == 200
+            before = (panel.data_dir / "configs" / "prov.yaml").read_bytes()
+
+            async def forced_hot_apply_failure(*args, **kwargs):
+                raise HotApplyError("forced hot-apply failure")
+
+            monkeypatch.setattr("clashflow.refresh.hot_apply", forced_hot_apply_failure)
+            origin.state["body"] = SUB_V2
+            resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
+            assert resp.status_code == 502
+            assert resp.json()["detail"] == "forced hot-apply failure"
+
+        # The previous Config stays byte-identical despite the validated
+        # swap having happened in between...
+        assert (panel.data_dir / "configs" / "prov.yaml").read_bytes() == before
+        assert list((panel.data_dir / "configs").glob("*.tmp")) == []
+        # ...and the Subscriptions view carries the failure state and reason.
+        entry = (await panel.client.get("/api/panel/subscriptions")).json()[0]
+        assert entry["state"] == "error"
+        assert entry["last_error"] == "forced hot-apply failure"
+
+
 async def test_failed_refresh_keeps_the_previous_config_and_shows_the_failure_reason(
     boot_app,
 ) -> None:
     # Failure class: network error (the provider's listener goes away).
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             before = (panel.data_dir / "configs" / "prov.yaml").read_bytes()
             refresh_at_before = (await panel.client.get("/api/panel/subscriptions")).json()[0][
@@ -224,7 +216,7 @@ async def test_refresh_with_invalid_yaml_is_rejected_and_marks_the_subscription(
 ) -> None:
     # Failure class: invalid YAML (unparseable; the Kernel names the parse error).
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             before = (panel.data_dir / "configs" / "prov.yaml").read_bytes()
 
@@ -247,7 +239,7 @@ async def test_refresh_with_kernel_validation_error_is_rejected_and_marks_the_su
     # Failure class: validation error (parses fine, but is not a complete
     # mihomo Config; the Kernel refuses it verbatim).
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             before = (panel.data_dir / "configs" / "prov.yaml").read_bytes()
 
@@ -274,7 +266,7 @@ async def test_adding_a_subscription_that_fails_fetch_or_validation_creates_noth
         assert resp.status_code == 502
         assert "subscription fetch failed" in resp.json()["detail"]
 
-        with subscription_server(SUB_INVALID_YAML) as origin:
+        with origin_server(SUB_INVALID_YAML) as origin:
             resp = await _add_subscription(panel, "yamlbad", origin.url)
         assert resp.status_code == 400
         assert "test failed" in resp.json()["detail"]
@@ -291,7 +283,7 @@ async def test_deleting_a_subscription_removes_the_subscription_and_its_config(
     boot_app,
 ) -> None:
     async with boot_app() as panel:
-        with subscription_server(SUB_V1) as origin:
+        with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
 
         resp = await panel.client.delete("/api/panel/subscriptions/prov")
