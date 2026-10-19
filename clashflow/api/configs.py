@@ -35,6 +35,7 @@ from clashflow.apply import (
 )
 from clashflow.db import (
     DEFAULT_CONFIG_KIND,
+    SUBSCRIPTION_DERIVED_KIND,
     ConfigAlreadyExists,
     ConfigIsActive,
     ConfigNotFound,
@@ -231,6 +232,17 @@ async def _hot_apply_or_502(request: Request, target: Path) -> None:
 
 @router.delete("/api/panel/configs/{name}")
 async def delete_config(request: Request, name: str) -> dict[str, str]:
+    try:
+        entry = request.app.state.store.get_config(name)
+    except ConfigNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # The pair rule: a Subscription-derived Config is deleted through its
+    # Subscription only, or the Subscription is left orphaned.
+    if entry["kind"] == SUBSCRIPTION_DERIVED_KIND:
+        raise HTTPException(
+            status_code=409,
+            detail=f"config is subscription-derived; delete its subscription instead: {name}",
+        )
     try:
         request.app.state.store.remove_config(name)
     except ConfigNotFound as exc:

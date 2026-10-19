@@ -211,6 +211,32 @@ async def test_failed_refresh_keeps_the_previous_config_and_shows_the_failure_re
         assert entry["last_refresh_at"] == refresh_at_before
 
 
+async def test_refresh_with_a_non_2xx_response_is_a_fetch_failure_and_keeps_the_previous_config(
+    boot_app,
+) -> None:
+    # Failure class: the provider answers with a non-2xx status (403/404/410
+    # are the everyday provider failures) — a fetch failure naming the HTTP
+    # status, the previous Config byte-identical, the reason marked.
+    async with boot_app() as panel:
+        with origin_server(SUB_V1) as origin:
+            assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
+            before = (panel.data_dir / "configs" / "prov.yaml").read_bytes()
+            refresh_at_before = (await panel.client.get("/api/panel/subscriptions")).json()[0][
+                "last_refresh_at"
+            ]
+
+            origin.state["status"] = 403
+            resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
+            assert resp.status_code == 502
+            assert "subscription fetch failed: HTTP 403" in resp.json()["detail"]
+
+        assert (panel.data_dir / "configs" / "prov.yaml").read_bytes() == before
+        entry = (await panel.client.get("/api/panel/subscriptions")).json()[0]
+        assert entry["state"] == "error"
+        assert "subscription fetch failed: HTTP 403" in entry["last_error"]
+        assert entry["last_refresh_at"] == refresh_at_before
+
+
 async def test_refresh_with_invalid_yaml_is_rejected_and_marks_the_subscription(
     boot_app,
 ) -> None:
@@ -279,6 +305,23 @@ async def test_adding_a_subscription_that_fails_fetch_or_validation_creates_noth
         ]
 
 
+async def test_adding_a_subscription_with_a_non_http_url_is_refused_before_any_fetch(
+    boot_app,
+) -> None:
+    # Only http(s) URLs are accepted: a non-http scheme or a bare host is
+    # refused as a 400 before any fetch (the dead-port witness would surface
+    # a fetch attempt as a transport failure instead), and nothing registers.
+    async with boot_app() as panel:
+        with dead_subscription_url() as dead:
+            for url in (dead.replace("http://", "ftp://"), dead.removeprefix("http://")):
+                resp = await _add_subscription(panel, "badurl", url)
+                assert resp.status_code == 400
+                assert "must be http(s)" in resp.json()["detail"]
+        assert (await panel.client.get("/api/panel/subscriptions")).json() == []
+        names = {c["name"] for c in (await panel.client.get("/api/panel/configs")).json()}
+        assert names == {"default"}
+
+
 async def test_deleting_a_subscription_removes_the_subscription_and_its_config(
     boot_app,
 ) -> None:
@@ -296,3 +339,28 @@ async def test_deleting_a_subscription_removes_the_subscription_and_its_config(
 
         resp = await panel.client.delete("/api/panel/subscriptions/ghost")
         assert resp.status_code == 404
+
+
+async def test_deleting_a_subscription_derived_config_through_the_config_api_is_refused(
+    boot_app,
+) -> None:
+    # The pair rule ("a registered Subscription always has exactly one
+    # Config") is enforced on the Config API too: a Subscription-derived
+    # Config is deleted through its Subscription only — a direct delete
+    # would leave the Subscription orphaned.
+    async with boot_app() as panel:
+        with origin_server(SUB_V1) as origin:
+            assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
+
+        resp = await panel.client.delete("/api/panel/configs/prov")
+        assert resp.status_code == 409
+        # The refusal leaves the pair fully intact…
+        names = {c["name"] for c in (await panel.client.get("/api/panel/configs")).json()}
+        assert names == {"default", "prov"}
+        assert (panel.data_dir / "configs" / "prov.yaml").read_bytes() == SUB_V1
+        entries = (await panel.client.get("/api/panel/subscriptions")).json()
+        assert [e["name"] for e in entries] == ["prov"]
+        # …and the Subscription path still deletes it.
+        assert (await panel.client.delete("/api/panel/subscriptions/prov")).status_code == 200
+        names = {c["name"] for c in (await panel.client.get("/api/panel/configs")).json()}
+        assert names == {"default"}
