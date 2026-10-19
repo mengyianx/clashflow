@@ -21,6 +21,20 @@ async def _mixed_port(client: httpx.AsyncClient, secret: str) -> int:
     return resp.json()["mixed-port"]
 
 
+async def _wait_mixed_port(client: httpx.AsyncClient, secret: str, expected: int) -> int:
+    """Poll for the expected mixed-port: the Controller answers before its
+    listeners bind, and /configs reports 0 inside that startup window (see the
+    timing note in the PR description) — a one-shot read there is a flake."""
+    deadline = time.monotonic() + 5.0
+    value = -1
+    while time.monotonic() < deadline:
+        value = await _mixed_port(client, secret)
+        if value == expected:
+            return value
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"mixed-port never became {expected}: last seen {value}")
+
+
 async def test_start_stop_restart_actions_report_resulting_state(boot_app) -> None:
     async with boot_app() as panel:
         secret = panel.app.state.secret
@@ -77,7 +91,7 @@ async def test_start_stop_restart_actions_report_resulting_state(boot_app) -> No
         assert body["active_config"] == "alt"
         assert panel.app.state.kernel.pid != pid_before_restart
         async with httpx.AsyncClient() as kc:
-            assert await _mixed_port(kc, secret) == 7891
+            await _wait_mixed_port(kc, secret, 7891)
 
 
 async def test_killed_kernel_respawns_with_active_config(boot_app) -> None:
@@ -110,7 +124,7 @@ async def test_killed_kernel_respawns_with_active_config(boot_app) -> None:
         assert panel.app.state.kernel.pid != old_pid
         # The respawned Kernel runs the Active Config: its API serves alt's port.
         async with httpx.AsyncClient() as kc:
-            assert await _mixed_port(kc, secret) == 7891
+            await _wait_mixed_port(kc, secret, 7891)
 
 
 async def test_repeated_crashes_back_off_exponentially_and_surface_degraded(
