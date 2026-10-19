@@ -37,7 +37,7 @@ from typing import cast
 
 import httpx
 
-from clashflow.db import MetadataStore, config_filename
+from clashflow.db import ConfigNotFound, MetadataStore, config_filename
 from clashflow.kernel import KernelManager
 from clashflow.refresh import (
     DEFAULT_UPDATE_INTERVAL_MINUTES,
@@ -123,7 +123,10 @@ class SubscriptionScheduler:
                 apply_when_active=bool(active),
                 user_agent=user_agent,
             )
-        except REFRESH_FAILURES as exc:
+        # ConfigNotFound: the Config registration can be gone while the
+        # Subscription row remains (external tampering); like a fetch failure
+        # it marks this entry and moves on — never kills the ticker.
+        except (*REFRESH_FAILURES, ConfigNotFound) as exc:
             reason = mark_subscription_refresh_failed(self._store, name, exc)
             log.warning("scheduled refresh of subscription %s failed: %s", name, reason)
             return

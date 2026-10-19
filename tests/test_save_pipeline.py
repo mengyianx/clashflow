@@ -12,6 +12,8 @@ import subprocess
 import httpx
 from conftest import origin_server
 
+from clashflow.apply import HotApplyError
+
 CONTROLLER = "http://127.0.0.1:9090"
 
 
@@ -150,6 +152,40 @@ async def test_failed_save_leaves_no_temp_residue(boot_app) -> None:
         assert (configs_dir / "spare.yaml").read_text() == "{}\n"
 
 
+async def test_saving_the_active_config_with_a_refused_hot_apply_returns_502_and_the_new_bytes_wait_for_the_next_restart(
+    boot_app, monkeypatch
+) -> None:
+    # The save pipeline's atomic swap is its point of no return (unlike the
+    # refresh pipeline, which rolls back): when the Controller refuses the
+    # forced reload the request reports 502, the new bytes stay on disk and
+    # take effect at the next (re)start, and the running Kernel keeps the old
+    # Config. Pinned so the two pipelines' trade-off never flips silently.
+    async with boot_app() as panel:
+        secret = panel.app.state.secret
+        pid_before = panel.app.state.kernel.pid
+
+        async def forced_hot_apply_failure(*args, **kwargs):
+            raise HotApplyError("forced hot-apply failure")
+
+        monkeypatch.setattr("clashflow.api.configs.hot_apply", forced_hot_apply_failure)
+        resp = await panel.client.put(
+            "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+        )
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "forced hot-apply failure"
+
+        # The new bytes are on disk (the Editor and the next restart see them)…
+        body = (await panel.client.get("/api/panel/configs/default")).json()
+        assert body["content"] == "mixed-port: 7891\nallow-lan: true\n"
+        # …while the running Kernel still serves the old Config, same process,
+        # and the Active record is unchanged.
+        assert panel.app.state.kernel.pid == pid_before
+        assert (await _controller_configs(secret))["mixed-port"] == 7890
+        health = (await panel.client.get("/api/service/health")).json()
+        assert health["active_config"] == "default"
+        assert health["kernel"] == "up"
+
+
 async def test_switching_active_config_hot_applies_and_records_without_restart(boot_app) -> None:
     async with boot_app() as panel:
         secret = panel.app.state.secret
@@ -215,6 +251,44 @@ async def test_failed_switch_keeps_previous_active_recorded_and_running(boot_app
         by_name = {c["name"]: c for c in configs}
         assert by_name["default"]["active"] is True
         assert by_name["stale"]["active"] is False
+        health = (await panel.client.get("/api/service/health")).json()
+        assert health["active_config"] == "default"
+        assert health["kernel"] == "up"
+        assert panel.app.state.kernel.pid == pid_before
+        assert (await _controller_configs(secret))["mixed-port"] == 7890
+
+
+async def test_a_refused_hot_apply_keeps_the_previous_active_recorded_and_running(
+    boot_app, monkeypatch
+) -> None:
+    # The switch's second failure class, beyond Kernel validation: the
+    # Controller refuses the forced reload (e.g. a port conflict). The switch
+    # reports 502 and the previous Active stays recorded and running — the
+    # "recorded ONLY on success" invariant this pins.
+    async with boot_app() as panel:
+        secret = panel.app.state.secret
+        pid_before = panel.app.state.kernel.pid
+
+        resp = await panel.client.post("/api/panel/configs", json={"name": "alt"})
+        assert resp.status_code == 201
+        resp = await panel.client.put(
+            "/api/panel/configs/alt", content="mixed-port: 7891\nallow-lan: true\n"
+        )
+        assert resp.status_code == 200
+
+        async def forced_hot_apply_failure(*args, **kwargs):
+            raise HotApplyError("forced hot-apply failure")
+
+        monkeypatch.setattr("clashflow.api.configs.hot_apply", forced_hot_apply_failure)
+        resp = await panel.client.put("/api/panel/configs/alt/active")
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "forced hot-apply failure"
+
+        # The previous Active stays recorded, running, and serving.
+        configs = (await panel.client.get("/api/panel/configs")).json()
+        by_name = {c["name"]: c for c in configs}
+        assert by_name["default"]["active"] is True
+        assert by_name["alt"]["active"] is False
         health = (await panel.client.get("/api/service/health")).json()
         assert health["active_config"] == "default"
         assert health["kernel"] == "up"

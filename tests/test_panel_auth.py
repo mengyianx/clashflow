@@ -97,6 +97,23 @@ async def test_healthz_stays_an_unauthenticated_liveness_surface(boot_app) -> No
         assert resp.json() == {"status": "ok"}
 
 
+async def test_the_login_page_shell_loads_without_a_session(boot_app) -> None:
+    # The one page that must load before a session exists: the Management
+    # Panel's static shell under `/` is public by design (it carries no
+    # data). Locking it down would lock everyone out — with a green suite.
+    async with (
+        boot_app() as panel,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=panel.app), base_url="http://panel"
+        ) as anon,
+    ):
+        resp = await anon.get("/")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/html")
+        # The data-bearing surfaces stay locked for the very same client.
+        assert (await anon.get("/api/panel/configs")).status_code == 401
+
+
 async def test_fastapi_builtin_docs_surfaces_are_not_served(boot_app) -> None:
     # Ticket #17 AC1: FastAPI's built-in docs are not part of the Management
     # Panel surface (the UI never links them), so /docs, /redoc and

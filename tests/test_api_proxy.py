@@ -8,6 +8,7 @@ import httpx
 import pytest
 from conftest import TEST_PANEL_PASSWORD, lan_ip
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 CONTROLLER = "http://127.0.0.1:9090"
 
@@ -118,3 +119,23 @@ async def test_rest_proxy_reports_kernel_down_as_bad_gateway(boot_app, tmp_path)
     async with boot_app(kernel_bin=str(broken)) as panel:
         resp = await panel.client.get("/api/version")
         assert resp.status_code == 502
+
+
+async def test_websocket_proxy_reports_kernel_down_as_a_1011_close(boot_app, tmp_path) -> None:
+    # The WebSocket twin of the REST 502: an authenticated stream request
+    # finds no Controller to complete the upstream handshake against, so the
+    # browser sees an internal-error close (1011), not a hang or a bare drop.
+    broken = tmp_path / "not-a-kernel"
+    broken.write_text("#!/bin/sh\nexit 1\n")
+    broken.chmod(0o755)
+
+    async with boot_app(kernel_bin=str(broken)) as panel:
+        client = TestClient(panel.app)
+        login = client.post("/api/panel/auth/login", json={"password": TEST_PANEL_PASSWORD})
+        assert login.status_code == 200
+        with (
+            pytest.raises(WebSocketDisconnect) as exc_info,
+            client.websocket_connect("/api/traffic"),
+        ):
+            pass
+        assert exc_info.value.code == 1011

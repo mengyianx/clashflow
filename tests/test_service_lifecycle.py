@@ -7,6 +7,7 @@ the Active-Config path is proved by what the Kernel actually loads.
 import asyncio
 import itertools
 import os
+import shlex
 import signal
 import time
 
@@ -168,3 +169,56 @@ async def test_repeated_crashes_back_off_exponentially_and_surface_degraded(
         body = (await panel.client.get("/api/service/health")).json()
         assert body["state"] == "degraded"
         assert body["respawns"] == 4
+
+
+async def test_manual_start_recovers_from_degraded_and_supervision_resumes(
+    boot_app, tmp_path, monkeypatch, mihomo_bin
+) -> None:
+    # Degraded is not a dead end (the documented way out): once the crashes
+    # exhaust the respawn budget, a manual start with a fixed Kernel resets
+    # the counters and brings the stack back up — and the supervisor keeps
+    # guarding it afterwards.
+    monkeypatch.setenv("CLASHFLOW_RESPAWN_BASE_DELAY", "0.1")
+    monkeypatch.setenv("CLASHFLOW_MAX_RESPAWNS", "2")
+    crashy = tmp_path / "crashy"
+    crashy.write_text("#!/bin/sh\nexit 1\n")
+    crashy.chmod(0o755)
+
+    async with boot_app(kernel_bin=str(crashy)) as panel:
+        secret = panel.app.state.secret
+        deadline = time.monotonic() + 10.0
+        body: dict = {}
+        while time.monotonic() < deadline:
+            body = (await panel.client.get("/api/service/health")).json()
+            if body["state"] == "degraded":
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError(f"never reached degraded: {body}")
+        assert body["respawns"] == 2
+
+        # Fix the Kernel at the same binary path, then take the way out.
+        crashy.write_text(f'#!/bin/sh\nexec {shlex.quote(mihomo_bin)} "$@"\n')
+        resp = await panel.client.post("/api/service/start")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["state"] == "up"
+        assert body["kernel"] == "up"
+        assert body["active_config"] == "default"
+        assert body["respawns"] == 0  # the crash budget is reset
+        async with httpx.AsyncClient() as kc:
+            await _wait_mixed_port(kc, secret, 7890)
+
+        # Supervision resumed: a later crash is respawned against the fresh
+        # budget, not left dead in degraded.
+        old_pid = panel.app.state.kernel.pid
+        assert old_pid is not None
+        os.kill(old_pid, signal.SIGKILL)
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            body = (await panel.client.get("/api/service/health")).json()
+            if body["kernel"] == "up" and body["respawns"] == 1:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise AssertionError(f"kernel did not respawn after recovery: {body}")

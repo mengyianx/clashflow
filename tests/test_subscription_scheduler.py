@@ -182,3 +182,54 @@ async def test_a_subscription_without_an_interval_override_follows_the_global_de
             # Only the import-time fetch ever reached the provider.
             assert plain_origin.state["user_agents"] == ["ClashFlow/0.1"]
             assert (await _subscription_state(panel, "plain"))["state"] == "ok"
+
+
+async def test_a_subscription_whose_config_is_gone_gets_marked_and_never_stops_scheduled_refresh_of_the_others(
+    boot_app, monkeypatch
+) -> None:
+    # Regression: one broken Subscription row (its Config registration gone
+    # outside the API) must never take the scheduler down with it — the
+    # failure is marked on the broken entry while a healthy sibling keeps
+    # refreshing on later ticks.
+    monkeypatch.setenv("CLASHFLOW_SCHEDULER_TICK_SECONDS", "0.05")
+    async with boot_app() as panel:
+        with (
+            origin_server(SUB_V1) as orphan_origin,
+            origin_server(SUB_V1) as healthy_origin,
+        ):
+            assert (await _add_subscription(panel, "orphan", orphan_origin.url)).status_code == 201
+            assert (
+                await _add_subscription(panel, "healthy", healthy_origin.url)
+            ).status_code == 201
+            for name in ("orphan", "healthy"):
+                patched = await panel.client.patch(
+                    f"/api/panel/subscriptions/{name}", json={"update_interval_minutes": 1}
+                )
+                assert patched.status_code == 200
+            # Test arrangement (not a seam action): drop the Config
+            # registration out from under "orphan" the way external tampering
+            # would; its Subscription row survives. Both Subscriptions are
+            # due from here on, "orphan" listed first.
+            panel.app.state.store.remove_config("orphan")
+            _arrange_last_refresh(panel, "orphan", timedelta(minutes=2))
+            _arrange_last_refresh(panel, "healthy", timedelta(minutes=2))
+            orphan_origin.state["body"] = SUB_V2
+            healthy_origin.state["body"] = SUB_V2
+
+            async def healthy_refreshed() -> bool:
+                return await _config_content(panel, "healthy") == SUB_V2.decode()
+
+            await _eventually(healthy_refreshed)
+            # The scheduler survived the broken entry: a second due cycle
+            # still lands.
+            healthy_origin.state["body"] = SUB_PLAIN_V2
+            _arrange_last_refresh(panel, "healthy", timedelta(minutes=2))
+
+            async def healthy_refreshed_again() -> bool:
+                return await _config_content(panel, "healthy") == SUB_PLAIN_V2.decode()
+
+            await _eventually(healthy_refreshed_again)
+            # The broken entry surfaces as a visible error marker, not silence.
+            entry = await _subscription_state(panel, "orphan")
+            assert entry["state"] == "error"
+            assert entry["last_error"]
