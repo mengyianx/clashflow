@@ -43,6 +43,12 @@ htmlcov/
 Thumbs.db
 desktop.ini
 
+# Node / web frontend
+node_modules/
+
+# Embedded Runtime Dashboard bundle (scripts/fetch-ui.sh)
+metacubexd/
+
 # Logs
 *.log
 logs/
