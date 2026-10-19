@@ -16,6 +16,8 @@ from clashflow.api.configs import router as configs_router
 from clashflow.api.service import router as service_router
 from clashflow.api.subscriptions import router as subscriptions_router
 from clashflow.apiproxy import router as apiproxy_router
+from clashflow.auth import AuthMiddleware, SessionRegistry
+from clashflow.auth import router as auth_router
 from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
 from clashflow.ui import router as ui_router
@@ -79,9 +81,15 @@ def create_app(
     web_dist: Path | None = None,
     ui_dist: Path | None = None,
     boot_timeout: float = 10.0,
+    password: str | None = None,
 ) -> FastAPI:
     resolved_data = data_dir or Path(os.environ.get("CLASHFLOW_DATA_DIR", "/data"))
     resolved_kernel = kernel_bin or os.environ.get("CLASHFLOW_KERNEL", "mihomo")
+    # Panel password (#17): CLASHFLOW_PASSWORD is a REQUIRED env (plan §2
+    # contract table). Resolution is cheap; the fail-fast check lives in the
+    # lifespan below so `import clashflow.main` (module-level app) still works
+    # and the process refuses to start with a clear error.
+    resolved_password = password if password is not None else os.environ.get("CLASHFLOW_PASSWORD")
     if web_dist is None:
         env_dist = os.environ.get("CLASHFLOW_WEB_DIST")
         web_dist = (
@@ -93,6 +101,15 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if not resolved_password:
+            # REQUIRED env per plan §2; fail fast before touching the volume
+            # or spawning the Kernel.
+            raise RuntimeError(
+                "CLASHFLOW_PASSWORD is not set: the Management Panel password is required "
+                "(set the CLASHFLOW_PASSWORD environment variable before starting)"
+            )
+        app.state.panel_password = resolved_password
+        app.state.sessions = SessionRegistry()
         configs_dir = _ensure_layout(resolved_data)
         store = MetadataStore(resolved_data / "clashflow.db")
         app.state.store = store
@@ -128,8 +145,13 @@ def create_app(
             store.close()
 
     app = FastAPI(title="ClashFlow", lifespan=lifespan)
+    # Auth (#17): pure-ASGI guard around every surface (http + WebSocket
+    # scopes); registered first, wraps routers and static mounts alike.
+    app.add_middleware(AuthMiddleware)
     # Panel routers register before the Controller reverse proxy (#14): the
-    # registry owns /api/panel/*, the Kernel keeps /api/configs.
+    # registry owns /api/panel/*, the Kernel keeps /api/configs. The auth
+    # router owns /api/panel/auth/* and the public /healthz liveness route.
+    app.include_router(auth_router)
     app.include_router(configs_router)
     app.include_router(service_router)
     app.include_router(subscriptions_router)

@@ -57,8 +57,11 @@ ENV CLASHFLOW_DATA_DIR=/data \
     CLASHFLOW_UI_DIST=/app/metacubexd
 VOLUME /data
 EXPOSE 7890 8080
+# /healthz is the unauthenticated panel liveness surface (#17): it answers
+# whether the panel process serves HTTP, independent of Kernel state.
+# /api/service/health requires a session and must not gate the container.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/service/health', timeout=4)"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "-m", "clashflow"]

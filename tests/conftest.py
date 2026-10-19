@@ -11,7 +11,12 @@ from fastapi import FastAPI
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-type Panel = SimpleNamespace  # app, client, data_dir
+# Ticket #17: the panel password comes from the environment (plan §2, REQUIRED
+# env CLASHFLOW_PASSWORD). boot_app sets this value for every boot; tests
+# logging in on their own client (e.g. a TestClient for WebSockets) use it too.
+TEST_PANEL_PASSWORD = "clashflow-test-panel-password"
+
+type Panel = SimpleNamespace  # app, client, data_dir, password
 
 
 def _locate_kernel() -> str:
@@ -66,6 +71,7 @@ def boot_app(mihomo_bin: str, tmp_path_factory: pytest.TempPathFactory) -> BootA
         web_dist: Path | None = None,
         ui_dist: Path | None = None,
         config_body: str | None = None,
+        password: str | None = None,
     ) -> AsyncIterator[Panel]:
         from clashflow.main import create_app
 
@@ -78,10 +84,19 @@ def boot_app(mihomo_bin: str, tmp_path_factory: pytest.TempPathFactory) -> BootA
             kernel_bin=kernel_bin or mihomo_bin,
             web_dist=web_dist,
             ui_dist=ui_dist,
+            # #17: every boot carries the panel password; a test may pass "" to
+            # exercise the missing-CLASHFLOW_PASSWORD startup failure.
+            password=TEST_PANEL_PASSWORD if password is None else password,
         )
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://panel") as client:
+                # The shared client authenticates once (session cookie jar); a
+                # test that needs an anonymous client builds its own.
+                login = await client.post(
+                    "/api/panel/auth/login", json={"password": TEST_PANEL_PASSWORD}
+                )
+                assert login.status_code == 200, login.text
                 yield SimpleNamespace(app=app, client=client, data_dir=data)
 
     return _boot

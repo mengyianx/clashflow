@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ConfigsPage } from "./ConfigsPage";
 import { EditorPage } from "./EditorPage";
+import { LoginPage } from "./LoginPage";
 import { SubscriptionsPage } from "./SubscriptionsPage";
 
 type Health = {
@@ -18,27 +19,33 @@ const NAV_ITEMS = ["Overview", "Configs", "Subscriptions"];
 export function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  // #17: session gate — null until the first health probe settles; a 401
+  // (never logged in, or the session ended) shows the LoginPage.
+  const [authed, setAuthed] = useState<boolean | null>(null);
+
+  const poll = useCallback(async () => {
+    try {
+      const resp = await fetch("/api/service/health");
+      if (resp.status === 401) {
+        setHealth(null);
+        setAuthed(false);
+        return;
+      }
+      if (resp.ok) {
+        const body = (await resp.json()) as Health;
+        setHealth(body);
+        setAuthed(true);
+      }
+    } catch {
+      setHealth(null);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const resp = await fetch("/api/service/health");
-        if (resp.ok) {
-          const body = (await resp.json()) as Health;
-          if (!cancelled) setHealth(body);
-        }
-      } catch {
-        if (!cancelled) setHealth(null);
-      }
-    };
     void poll();
     const timer = setInterval(() => void poll(), 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
+    return () => clearInterval(timer);
+  }, [poll]);
 
   // Service Control actions: report the resulting Kernel state, then re-poll.
   const runAction = async (action: "start" | "stop" | "restart") => {
@@ -51,6 +58,18 @@ export function App() {
     }
   };
 
+  // #17: logout revokes the session server-side, then the shell falls back to
+  // the LoginPage on the next poll.
+  const logout = async () => {
+    await fetch("/api/panel/auth/logout", { method: "POST" });
+    setEditing(null);
+    await poll();
+  };
+
+  if (authed === false) {
+    return <LoginPage onLogin={() => void poll()} />;
+  }
+
   return (
     <main style={{ fontFamily: "system-ui", margin: "2rem auto", maxWidth: 480 }}>
       <h1>ClashFlow</h1>
@@ -60,6 +79,7 @@ export function App() {
             {item}
           </span>
         ))}
+        <button onClick={() => void logout()}>Logout</button>
       </nav>
       <section>
         <h2>Overview</h2>

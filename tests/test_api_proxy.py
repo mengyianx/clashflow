@@ -6,7 +6,7 @@ import socket
 
 import httpx
 import pytest
-from conftest import lan_ip
+from conftest import TEST_PANEL_PASSWORD, lan_ip
 from starlette.testclient import TestClient
 
 CONTROLLER = "http://127.0.0.1:9090"
@@ -26,6 +26,9 @@ async def test_rest_calls_through_panel_api_surface_reach_the_controller(boot_ap
 async def test_websocket_streams_pass_through_the_proxy(boot_app) -> None:
     async with boot_app() as panel:
         client = TestClient(panel.app)
+        # #17: the WebSocket proxy requires a session like every panel route.
+        login = client.post("/api/panel/auth/login", json={"password": TEST_PANEL_PASSWORD})
+        assert login.status_code == 200
 
         # /traffic pushes a frame roughly once per second.
         with client.websocket_connect("/api/traffic") as ws:
