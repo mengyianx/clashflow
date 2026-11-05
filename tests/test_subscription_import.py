@@ -168,7 +168,7 @@ async def test_hot_apply_failure_restores_the_previous_subscription_derived_conf
             async def forced_hot_apply_failure(*args, **kwargs):
                 raise HotApplyError("forced hot-apply failure")
 
-            monkeypatch.setattr("clashflow.refresh.hot_apply", forced_hot_apply_failure)
+            monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
             origin.state["body"] = SUB_V2
             resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
             assert resp.status_code == 502

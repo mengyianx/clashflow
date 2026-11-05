@@ -11,6 +11,13 @@ Empty Config semantics: creation writes the YAML empty mapping `{}`, which
 the pinned Kernel (v1.19.32) loads as a defaults-only config — a zero-byte
 file is refused by the Kernel ("configuration file … is empty").
 
+Save semantics: validate (`mihomo -t`) → atomic swap → hot-apply when the
+Config is the Active one. A Kernel rejection answers 400 with the Kernel's
+own output and leaves the stored file untouched; a refused hot-apply answers
+502 with the Controller's refusal text and puts the pre-save bytes back, so
+the stored Config stays the one the Kernel keeps running (the same restore
+the Subscription refresh uses).
+
 Blank template semantics (ticket #11): `POST` with `template: true` writes
 the minimal skeleton (`mixed-port: 7890`, `allow-lan: true`, plus the GEO
 auto-update keys) instead, so a new Hand-written Config is immediately
@@ -30,7 +37,7 @@ from clashflow.apply import (
     HotApplyError,
     KernelRejected,
     atomic_save,
-    hot_apply,
+    hot_apply_or_restore,
     validate_config,
 )
 from clashflow.db import (
@@ -178,7 +185,10 @@ async def save_config(request: Request, name: str) -> ConfigEntry:
     """Validate the raw YAML body with the Kernel config-test, atomically swap
     it into the Config's file, and hot-apply it when this Config is Active
     (same process, no restart). On validation failure the stored file stays
-    byte-identical and the Kernel's error output is returned verbatim."""
+    byte-identical and the Kernel's error output is returned verbatim. On a
+    refused hot-apply the pre-save bytes go back on disk (the Kernel keeps
+    running the previous Config) and the Controller's refusal text is returned
+    verbatim."""
     store = request.app.state.store
     try:
         entry = store.get_config(name)
@@ -187,12 +197,15 @@ async def save_config(request: Request, name: str) -> ConfigEntry:
     target = _configs_dir(request) / config_filename(name)
     kernel: KernelManager = request.app.state.kernel
     content = await request.body()
+    # The pre-save bytes, read BEFORE the swap: a refused hot-apply puts them
+    # back, so the stored Config stays the one the Kernel keeps running.
+    previous = target.read_bytes() if target.is_file() else None
     try:
         await atomic_save(kernel.binary, kernel.data_dir, target, content)
     except KernelRejected as exc:
         raise HTTPException(status_code=400, detail=exc.output) from exc
     if entry["active"] and kernel.alive():
-        await _hot_apply_or_502(request, target)
+        await _hot_apply_or_502(request, target, previous)
     log.info("saved config %s (%d bytes)", name, len(content))
     return store.get_config(name)
 
@@ -223,9 +236,19 @@ async def set_active_config(request: Request, name: str) -> ConfigEntry:
     return store.get_config(name)
 
 
-async def _hot_apply_or_502(request: Request, target: Path) -> None:
+async def _hot_apply_or_502(request: Request, target: Path, previous: bytes | None = None) -> None:
+    """Hot-apply the Config; a Controller refusal answers 502 with the
+    Controller's own text, verbatim.
+
+    `previous` are the bytes the file carried before the caller wrote it: a
+    refusal puts them back, so the stored Config stays byte-identical to the
+    one the Kernel keeps running. The Active Config switch writes nothing, so
+    it passes none and leaves the file alone.
+    """
     try:
-        await hot_apply(request.app.state.api_client, request.app.state.secret, target)
+        await hot_apply_or_restore(
+            request.app.state.api_client, request.app.state.secret, target, previous
+        )
     except HotApplyError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

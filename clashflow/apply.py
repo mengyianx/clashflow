@@ -2,6 +2,11 @@
 forced hot-apply through the Controller. Shared by the save endpoint, Active
 Config switching, and (per the plan) the Subscription refresh pipeline.
 
+A refused hot-apply leaves the Kernel on the previous Config, so the write
+paths put the pre-write bytes back on disk (`hot_apply_or_restore`): disk and
+the running state stay consistent, and the next Kernel restart does not boot
+bytes the Controller refused.
+
 Pinned Kernel (v1.19.32) facts this module encodes:
 - `mihomo -d <home> -t -f <file>` exits 0 = valid, 1 = invalid; the error
   banner goes to STDOUT (logrus writes to os.Stdout), stderr stays empty —
@@ -102,6 +107,31 @@ async def hot_apply(client: httpx.AsyncClient, secret: str, config_path: Path) -
     if not resp.is_success:
         raise HotApplyError(_upstream_message(resp))
     log.info("hot-applied config %s", config_path)
+
+
+async def hot_apply_or_restore(
+    client: httpx.AsyncClient, secret: str, config_path: Path, previous: bytes | None
+) -> None:
+    """Forced config reload through the Controller, with the pre-write bytes
+    put back when the Controller refuses it.
+
+    A refusal means the Kernel never left the old Config, so the stored file
+    must not keep the refused bytes either: `previous` (the bytes the file
+    carried before the write) goes back on disk and the refusal is re-raised
+    for the caller to surface verbatim. `previous` is None when the file did
+    not exist before the write — there are no bytes to put back then.
+
+    Both write paths use this one implementation: the save endpoint and the
+    Subscription refresh. In both the Kernel keeps running the previous
+    Config, so the stored Config has to match it.
+    """
+    try:
+        await hot_apply(client, secret, config_path)
+    except HotApplyError:
+        if previous is not None:
+            config_path.write_bytes(previous)
+            log.info("restored the previous Config bytes on %s", config_path.name)
+        raise
 
 
 def _upstream_message(resp: httpx.Response) -> str:
