@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+/* Theme switch is an attribute on <html>, written before first paint by the
+   inline script in index.html and by the React theme hook afterwards. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+  Palette and type come from the luci-theme-7dollar "clay" tokens the panel
+  set out to follow: warm canvas, paper surfaces, one clay accent, serif
+  display headings over sans body text. Tokens are plain CSS variables so the
+  light/dark blocks stay in one place and CodeMirror reads the same values.
+*/
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC",
+    "Microsoft YaHei UI", "Noto Sans CJK SC", "Noto Sans SC", "Segoe UI", Roboto, sans-serif;
+  --font-serif: "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", "Noto Serif SC",
+    "Source Han Serif SC", Georgia, serif;
+  --font-mono: ui-monospace, "DejaVu Sans Mono", "SF Mono", Menlo, Consolas, "Liberation Mono",
+    "Noto Sans CJK SC", monospace;
+
+  --radius-control: 10px;
+  --radius-panel: 14px;
+  --radius-card: 20px;
+
+  --shadow-card: 0 1px 1px rgba(20, 20, 20, 0.03), 0 10px 30px -18px rgba(20, 20, 20, 0.18);
+  --shadow-pop: 0 24px 60px -20px rgba(20, 20, 20, 0.35), 0 2px 6px rgba(20, 20, 20, 0.06);
+}
+
+:root {
+  --canvas: #f3f1ea;
+  --surface: #fbfaf6;
+  --surface-2: #efece3;
+  --hover: #e9e5da;
+  --line: #e2ddd1;
+  --line-soft: #ece8de;
+  --ink: #1f1e1b;
+  --ink-2: #5b5850;
+  --ink-3: #726d64;
+  --accent: #d97757;
+  --accent-strong: #b74c29;
+  --accent-soft: #f6e2d7;
+  --on-accent: #fff;
+  --tint: rgba(217, 119, 87, 0.1);
+  --ok: #5f8a55;
+  --ok-soft: #e1ead8;
+  --warn: #b98330;
+  --warn-soft: #f4e7cf;
+  --bad: #c0533e;
+  --bad-soft: #f6ddd5;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --canvas: #1d1c1a;
+  --surface: #262522;
+  --surface-2: #2e2d29;
+  --hover: #34322e;
+  --line: #383631;
+  --line-soft: #302f2b;
+  --ink: #edeae2;
+  --ink-2: #b4afa4;
+  --ink-3: #908b81;
+  --accent: #e0886a;
+  --accent-strong: #ea9a7e;
+  --accent-soft: #3d2c25;
+  --on-accent: #1d1c1a;
+  --tint: rgba(224, 136, 106, 0.12);
+  --ok: #7fa574;
+  --ok-soft: #2a3a26;
+  --warn: #d9a250;
+  --warn-soft: #3a3121;
+  --bad: #e0836f;
+  --bad-soft: #3d2320;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* CodeMirror fills the editor card; the palette comes from the same tokens. */
+.cm-editor {
+  height: 100%;
+  background: transparent;
+}
+.cm-editor .cm-gutters {
+  background: transparent;
+  border-right: 1px solid var(--line-soft);
+  color: var(--ink-3);
+}
+.cm-editor .cm-activeLine,
+.cm-editor .cm-activeLineGutter {
+  background: var(--hover);
+}
+.cm-editor.cm-focused {
+  outline: none;
+}

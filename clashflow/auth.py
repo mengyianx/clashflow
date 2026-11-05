@@ -18,8 +18,8 @@ with WebSocket close code 4401 (per the ASGI spec, close-before-accept
 refuses the handshake).
 
 Protected surfaces: everything under `/api` (panel CRUD, service control and
-the Controller reverse proxy, REST + WebSocket) and `/ui` (Runtime Dashboard
-bundle). Public by design: `GET /healthz` (container liveness — the panel
+the Controller reverse proxy, REST + WebSocket), `/ui` (metacubexd) and `/zui`
+(zashboard) Runtime Dashboard bundles. Public by design: `GET /healthz` (container liveness — the panel
 process answering HTTP, independent of Kernel state), `POST
 /api/panel/auth/login`, and the Management Panel's own static shell under `/`
 (the login page itself must load before a session exists; it carries no data).
@@ -92,7 +92,7 @@ def _is_public(path: str, method: str) -> bool:
         return True
     # The Management Panel's static shell under `/` carries no data and hosts
     # the login page; every data-bearing surface lives under /api or /ui.
-    return not path.startswith(("/api", "/ui"))
+    return not path.startswith(("/api", "/ui", "/zui"))
 
 
 class AuthMiddleware:
@@ -121,7 +121,11 @@ class AuthMiddleware:
             await send({"type": "websocket.close", "code": WS_UNAUTHORIZED_CODE})
             return
         accept = dict(scope.get("headers", [])).get(b"accept", b"")
-        if scope["path"].startswith("/ui") and scope["method"] == "GET" and b"text/html" in accept:
+        if (
+            scope["path"].startswith(("/ui", "/zui"))
+            and scope["method"] == "GET"
+            and b"text/html" in accept
+        ):
             response: Response = RedirectResponse("/", status_code=307)
         else:
             response = JSONResponse({"detail": "not authenticated"}, status_code=401)

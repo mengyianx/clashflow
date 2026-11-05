@@ -1,123 +1,61 @@
-import { useCallback, useEffect, useState } from "react";
-import { ConfigsPage } from "./ConfigsPage";
-import { EditorPage } from "./EditorPage";
-import { LoginPage } from "./LoginPage";
-import { SubscriptionsPage } from "./SubscriptionsPage";
+import { lazy, Suspense } from "react";
+import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 
-type Health = {
-  kernel: string;
-  state: string;
-  respawns: number;
-  active_config: string;
-};
+import { AppShell } from "@/components/AppShell";
+import { Toaster } from "@/components/Toaster";
+import { useTheme } from "@/hooks/useTheme";
+import { SessionProvider, useSession } from "@/lib/session";
+import { ConfigsPage } from "@/pages/ConfigsPage";
+import { LoginPage } from "@/pages/LoginPage";
+import { OverviewPage } from "@/pages/OverviewPage";
+import { SubscriptionsPage } from "@/pages/SubscriptionsPage";
+import { SystemPage } from "@/pages/SystemPage";
 
-// Navigation shell: later tickets add real pages (Subscriptions) here as
-// routes, keeping this file's structure. The Editor opens from the Configs
-// page ("Edit") for a picked Config.
-const NAV_ITEMS = ["Overview", "Configs", "Subscriptions"];
+// CodeMirror is the heaviest dependency and only the editor route needs it.
+const EditorPage = lazy(() =>
+  import("@/pages/EditorPage").then((module) => ({ default: module.EditorPage })),
+);
 
-export function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  // #17: session gate — null until the first health probe settles; a 401
-  // (never logged in, or the session ended) shows the LoginPage.
-  const [authed, setAuthed] = useState<boolean | null>(null);
+function AppRoutes() {
+  const session = useSession();
+  const { theme, toggle } = useTheme();
 
-  const poll = useCallback(async () => {
-    try {
-      const resp = await fetch("/api/service/health");
-      if (resp.status === 401) {
-        setHealth(null);
-        setAuthed(false);
-        return;
-      }
-      if (resp.ok) {
-        const body = (await resp.json()) as Health;
-        setHealth(body);
-        setAuthed(true);
-      }
-    } catch {
-      setHealth(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    void poll();
-    const timer = setInterval(() => void poll(), 5000);
-    return () => clearInterval(timer);
-  }, [poll]);
-
-  // Service Control actions: report the resulting Kernel state, then re-poll.
-  const runAction = async (action: "start" | "stop" | "restart") => {
-    try {
-      await fetch(`/api/service/${action}`, { method: "POST" });
-      const resp = await fetch("/api/service/health");
-      if (resp.ok) setHealth((await resp.json()) as Health);
-    } catch {
-      setHealth(null);
-    }
-  };
-
-  // #17: logout revokes the session server-side, then the shell falls back to
-  // the LoginPage on the next poll.
-  const logout = async () => {
-    await fetch("/api/panel/auth/logout", { method: "POST" });
-    setEditing(null);
-    await poll();
-  };
-
-  if (authed === false) {
-    return <LoginPage onLogin={() => void poll()} />;
+  if (session.status === "checking") {
+    return <div className="grid min-h-screen place-items-center text-sm text-ink-3">正在连接面板…</div>;
   }
 
   return (
-    <main style={{ fontFamily: "system-ui", margin: "2rem auto", maxWidth: 480 }}>
-      <h1>ClashFlow</h1>
-      <nav>
-        {NAV_ITEMS.map((item) => (
-          <span key={item} style={{ marginRight: 12 }}>
-            {item}
-          </span>
-        ))}
-        <button onClick={() => void logout()}>Logout</button>
-      </nav>
-      <section>
-        <h2>Overview</h2>
-        {health === null ? (
-          <p>Loading…</p>
+    <HashRouter>
+      <Toaster theme={theme} />
+      <Routes>
+        {session.status === "signed-in" ? (
+          <Route element={<AppShell theme={theme} onToggleTheme={toggle} />}>
+            <Route path="/overview" element={<OverviewPage />} />
+            <Route path="/configs" element={<ConfigsPage />} />
+            <Route
+              path="/configs/:name"
+              element={
+                <Suspense fallback={<p className="text-sm text-ink-3">正在加载编辑器…</p>}>
+                  <EditorPage />
+                </Suspense>
+              }
+            />
+            <Route path="/subscriptions" element={<SubscriptionsPage />} />
+            <Route path="/system" element={<SystemPage />} />
+            <Route path="*" element={<Navigate to="/overview" replace />} />
+          </Route>
         ) : (
-          <p>
-            Kernel: <strong>{health.kernel}</strong> · Active Config:{" "}
-            <strong>{health.active_config}</strong>
-          </p>
+          <Route path="*" element={<LoginPage />} />
         )}
-        {/* Runtime Dashboard entry (plan §4): the embedded metacubexd bundle. */}
-        <p>
-          <a href="/ui/">Open the Runtime Dashboard</a> — nodes, delay tests, connections, traffic,
-          logs
-        </p>
-        {health !== null && (
-          <>
-            <p>
-              State:{" "}
-              <strong style={{ color: health.state === "degraded" ? "red" : undefined }}>
-                {health.state}
-              </strong>
-              {health.state === "respawning" && ` (respawn ${health.respawns})`}
-              {health.state === "degraded" &&
-                " — Kernel crash loop gave up; start it again from here"}
-            </p>
-            <p>
-              <button onClick={() => void runAction("start")}>Start</button>{" "}
-              <button onClick={() => void runAction("stop")}>Stop</button>{" "}
-              <button onClick={() => void runAction("restart")}>Restart</button>
-            </p>
-          </>
-        )}
-      </section>
-      <ConfigsPage onEdit={setEditing} />
-      <SubscriptionsPage />
-      {editing !== null && <EditorPage key={editing} configName={editing} onOpen={setEditing} />}
-    </main>
+      </Routes>
+    </HashRouter>
+  );
+}
+
+export default function App() {
+  return (
+    <SessionProvider>
+      <AppRoutes />
+    </SessionProvider>
   );
 }

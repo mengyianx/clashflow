@@ -1,11 +1,15 @@
 # syntax=docker/dockerfile:1
 
 # --- Frontend shell (React + TS + Vite) ---
-FROM node:22-alpine AS web
+# Built on the BUILD platform: the bundle is JavaScript/CSS, identical for every
+# target arch, and Tailwind's lightningcss ships no linux-armv7-musl prebuild —
+# building it per-target breaks the arm/v7 image for no gain.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/tsconfig.json web/vite.config.ts web/index.html ./
+COPY web/public ./public
 COPY web/src ./src
 RUN npm run build
 
@@ -28,7 +32,7 @@ RUN apk add --no-cache curl \
  && /tmp/mihomo -v
 
 # --- Runtime Dashboard (metacubexd), pinned static release bundle ---
-FROM alpine:3.22 AS ui
+FROM --platform=$BUILDPLATFORM alpine:3.22 AS ui
 ARG METACUBEXD_VERSION=v1.273.1
 RUN apk add --no-cache curl \
  && curl -sSfL \
@@ -39,8 +43,27 @@ RUN apk add --no-cache curl \
  && mkdir /dist \
  && tar -xzf /tmp/compressed-dist.tgz -C /dist
 
+# --- Second Runtime Dashboard (zashboard), pinned static release bundle ---
+FROM --platform=$BUILDPLATFORM alpine:3.22 AS zui
+ARG ZASHBOARD_VERSION=v3.30.0
+# dist-no-fonts: the dashboard borrows the client's system fonts (the panel's
+# own CJK stack), keeping the image ~3 MB smaller than the bundled-font builds.
+RUN apk add --no-cache curl unzip \
+ && curl -sSfL \
+      "https://github.com/Zephyruso/zashboard/releases/download/${ZASHBOARD_VERSION}/dist-no-fonts.zip" \
+      -o /tmp/zui.zip \
+ && actual="$(sha256sum /tmp/zui.zip | cut -d' ' -f1)" \
+ && [ "$actual" = "ec794e7c4daf4c839ecbc0a1292fdaf7bc7a6e3e4a4ce284db2b32379145c278" ] \
+ && mkdir /dist \
+ && unzip -q /tmp/zui.zip -d /dist
+
 # --- Runtime: tini (PID 1) + Management Panel + Kernel ---
 FROM python:3.14-slim
+# Baseline versions this image ships; the panel's System page compares them
+# with GitHub when the user checks for updates (ADR-0003).
+ARG MIHOMO_VERSION=v1.19.32
+ARG METACUBEXD_VERSION=v1.273.1
+ARG ZASHBOARD_VERSION=v3.30.0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tini \
  && rm -rf /var/lib/apt/lists/*
@@ -51,10 +74,15 @@ RUN pip install --no-cache-dir .
 COPY --from=kernel /tmp/mihomo /usr/local/bin/mihomo
 COPY --from=web /src/dist /app/web/dist
 COPY --from=ui /dist /app/metacubexd
+COPY --from=zui /dist/dist /app/zashboard
+RUN printf '{"kernel":"%s","metacubexd":"%s","zashboard":"%s"}\n' \
+      "$MIHOMO_VERSION" "$METACUBEXD_VERSION" "$ZASHBOARD_VERSION" \
+      > /app/webui-versions.json
 
 ENV CLASHFLOW_DATA_DIR=/data \
     CLASHFLOW_WEB_DIST=/app/web/dist \
-    CLASHFLOW_UI_DIST=/app/metacubexd
+    CLASHFLOW_UI_DIST=/app/metacubexd \
+    CLASHFLOW_ZUI_DIST=/app/zashboard
 VOLUME /data
 EXPOSE 7890 8080
 # /healthz is the unauthenticated panel liveness surface (#17): it answers

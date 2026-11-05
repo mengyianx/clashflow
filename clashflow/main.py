@@ -1,6 +1,7 @@
 """Application assembly: /data layout, default Config, Kernel spawn, static web shell."""
 
 import asyncio
+import json
 import logging
 import os
 import secrets
@@ -15,13 +16,17 @@ from fastapi.staticfiles import StaticFiles
 from clashflow.api.configs import router as configs_router
 from clashflow.api.service import router as service_router
 from clashflow.api.subscriptions import router as subscriptions_router
+from clashflow.api.updates import router as updates_router
 from clashflow.apiproxy import router as apiproxy_router
 from clashflow.auth import AuthMiddleware, SessionRegistry
 from clashflow.auth import router as auth_router
 from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
 from clashflow.scheduler import SubscriptionScheduler
+from clashflow.static_mount import SwitchingStaticFiles
 from clashflow.ui import router as ui_router
+from clashflow.updates import UpdateManager
+from clashflow.zui import router as zui_router
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +86,7 @@ def create_app(
     kernel_bin: str | None = None,
     web_dist: Path | None = None,
     ui_dist: Path | None = None,
+    zui_dist: Path | None = None,
     boot_timeout: float = 10.0,
     password: str | None = None,
 ) -> FastAPI:
@@ -99,6 +105,42 @@ def create_app(
     if ui_dist is None:
         env_ui = os.environ.get("CLASHFLOW_UI_DIST")
         ui_dist = Path(env_ui) if env_ui else Path(__file__).resolve().parent.parent / "metacubexd"
+    if zui_dist is None:
+        env_zui = os.environ.get("CLASHFLOW_ZUI_DIST")
+        zui_dist = (
+            Path(env_zui) if env_zui else Path(__file__).resolve().parent.parent / "zashboard"
+        )
+    # Runtime updates: the artifacts baked into the image are the baseline, an
+    # update installed under /data wins over them (pointers are symlinks).
+    image_kernel = Path(str(resolved_kernel))
+    image_ui = {"metacubexd": ui_dist, "zashboard": zui_dist}
+    runtime_root = resolved_data / "runtime"
+
+    def resolve_ui(name: str) -> Path:
+        """A dashboard update installs under /data and wins over the image."""
+        pointer = runtime_root / "webui" / name / "current"
+        if (pointer / "index.html").is_file():
+            return pointer
+        return image_ui[name]
+
+    def resolve_kernel() -> str:
+        """The Kernel binary to spawn: an updated one under /data, else the image's."""
+        pointer = runtime_root / "kernel" / "current"
+        return str(pointer) if pointer.exists() else str(image_kernel)
+
+    resolved_kernel = resolve_kernel()
+    versions_file = Path(
+        os.environ.get("CLASHFLOW_VERSIONS_FILE")
+        or Path(__file__).resolve().parent.parent / "webui-versions.json"
+    )
+    try:
+        bundle_versions = (
+            json.loads(versions_file.read_text(encoding="utf-8")) if versions_file.is_file() else {}
+        )
+    except OSError, ValueError:
+        bundle_versions = {}
+    if not isinstance(bundle_versions, dict):
+        bundle_versions = {}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -121,9 +163,22 @@ def create_app(
         # Shared upstream client for the /api reverse proxy (clashflow.apiproxy).
         api_client = httpx.AsyncClient(trust_env=False, timeout=httpx.Timeout(30.0))
         app.state.api_client = api_client
+        app.state.resolve_ui = resolve_ui
 
         manager = KernelManager(resolved_kernel, resolved_data)
         app.state.kernel = manager
+        updates = UpdateManager(
+            store=store,
+            kernel=manager,
+            data_dir=resolved_data,
+            secret=secret,
+            image_kernel=image_kernel,
+            image_ui=image_ui,
+            bundle_versions={str(k): str(v) for k, v in bundle_versions.items()},
+            github_api=os.environ.get("CLASHFLOW_GITHUB_API", "https://api.github.com"),
+            github_proxy=os.environ.get("CLASHFLOW_GITHUB_PROXY", ""),
+        )
+        app.state.updates = updates
 
         def active_config_path() -> Path:
             return configs_dir / f"{store.get_active() or DEFAULT_CONFIG_NAME}.yaml"
@@ -147,6 +202,7 @@ def create_app(
         finally:
             scheduler.stop()
             supervisor.cancel()
+            await updates.aclose()
             await api_client.aclose()
             manager.stop()
             store.close()
@@ -170,10 +226,15 @@ def create_app(
     # Panel routers stay above the /api reverse proxy: an explicit panel route
     # always shadows the proxy (see clashflow/apiproxy.py routing convention).
     app.include_router(ui_router)
+    app.include_router(updates_router)
+    app.include_router(zui_router)
     app.include_router(apiproxy_router)
     # Runtime Dashboard (metacubexd static bundle); /ui/config.js is served by
     # clashflow.ui.router, which shadows this mount's upstream copy.
-    app.mount("/ui", StaticFiles(directory=str(ui_dist), html=True, check_dir=False), name="ui")
+    app.mount("/ui", SwitchingStaticFiles(lambda: resolve_ui("metacubexd"), "ui"), name="ui")
+    # Second Runtime Dashboard (zashboard); /zui/ itself is served by
+    # clashflow.zui.router (bootstrap injection), which shadows this mount.
+    app.mount("/zui", SwitchingStaticFiles(lambda: resolve_ui("zashboard"), "zui"), name="zui")
     app.mount("/", StaticFiles(directory=web_dist, html=True, check_dir=False), name="web")
     return app
 

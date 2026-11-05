@@ -97,3 +97,32 @@ async def test_deploy_endpoint_is_same_origin_not_a_build_time_absolute_url(
         # No scheme is baked in: the endpoint was not injected at build time.
         assert "http://" not in config.text
         assert "https://" not in config.text
+
+
+async def test_zui_serves_the_second_runtime_dashboard_preset_to_the_panel_proxy(
+    boot_app: BootApp, zashboard_dist: Path
+) -> None:
+    async with boot_app(zui_dist=zashboard_dist) as panel:
+        page = await panel.client.get("/zui/")
+        assert page.status_code == 200
+        # zashboard's own entry document (hash-routed; relative assets).
+        assert "<title>zashboard</title>" in page.text
+        assert "./assets/" in page.text
+        # The injected bootstrap points the dashboard at the panel's /api proxy
+        # (same origin, secret injected server-side) and hides the two upstream
+        # switches v1 rejects: core upgrade (version pinned to the image) and TUN.
+        head = page.text[: page.text.index("</head>")]
+        assert "secondaryPath" in head
+        assert "disableUpgradeCore" in head
+        assert "disableTunMode" in head
+        assert panel.app.state.secret not in page.text
+
+        # The bare path redirects into the dashboard instead of falling through
+        # to the Management Panel's static mount.
+        entry = await panel.client.get("/zui")
+        assert entry.status_code == 307
+        assert entry.headers["location"] == "/zui/"
+
+        # Bundle assets keep being served by the static mount.
+        asset = await panel.client.get("/zui/manifest.webmanifest")
+        assert asset.status_code == 200

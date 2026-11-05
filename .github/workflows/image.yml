@@ -1,0 +1,114 @@
+name: Image
+
+# 镜像由 GitHub 构建，本地不构建；发布只走手动触发。
+#   pull_request      -> 三种架构各构建一次（不推送），只验证 Dockerfile
+#   workflow_dispatch -> 输入版本号后发布镜像（vX.Y.Z / vX.Y / latest）并建 GitHub Release
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的版本号，格式 vX.Y.Z"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: 三架构构建（不推送）
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # QEMU builds can stall instead of failing; the frontend, metacubexd and
+    # zashboard stages build natively (Dockerfile pins $BUILDPLATFORM), and this
+    # bound keeps a future stall from eating a runner for GitHub's 6-hour cap.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      # arm/v7 is best-effort: only the Kernel stage is emulated.
+      - name: Build (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: 手动发版
+    # 手动触发；发版前请确认该 ref 的 Checks 为绿（见 .github/workflows/checks.yml）。
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version
+        run: |
+          v="${{ inputs.version }}"
+          if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::版本号必须形如 v1.2.3，收到：$v"
+            exit 1
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "MINOR=${v%.*}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags and labels
+        uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ env.VERSION }}
+            type=raw,value=${{ env.MINOR }}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > /tmp/notes.md <<EOF
+          容器镜像（linux/amd64、linux/arm64、linux/arm/v7）：
+
+          \`\`\`
+          ghcr.io/${{ github.repository }}:$VERSION
+          \`\`\`
+
+          发版提交：${{ github.sha }}
+          EOF
+          gh release create "$VERSION" --title "$VERSION" --notes-file /tmp/notes.md

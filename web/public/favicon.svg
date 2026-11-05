@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ClashFlow">
+  <rect width="32" height="32" rx="8" fill="#B74C29" />
+  <path
+    d="M9 6.2 13.4 10.4q2.6-1 5.2 0L23 6.2c.2 3.8.6 6.4.2 9.2C22.6 19.6 19.6 23.6 16 23.6s-6.6-4-7.2-8.2C8.4 12.6 8.8 10 9 6.2Z"
+    fill="#FFF6F1"
+  />
+  <circle cx="13" cy="15.6" r="1.45" fill="#B74C29" />
+  <circle cx="19" cy="15.6" r="1.45" fill="#B74C29" />
+</svg>

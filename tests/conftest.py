@@ -91,6 +91,23 @@ def mihomo_bin() -> str:
 
 
 @pytest.fixture(scope="session")
+def zashboard_dist() -> Path:
+    env = os.environ.get("CLASHFLOW_ZUI_DIST")
+    if env and (Path(env) / "index.html").is_file():
+        return Path(env)
+    repo_bundle = REPO_ROOT / "zashboard"
+    if (repo_bundle / "index.html").is_file():
+        return repo_bundle
+    for candidate in sorted(Path.home().glob(".cache/clashflow/zui-*")):
+        if (candidate / "index.html").is_file():
+            return candidate
+    pytest.fail(
+        "zashboard bundle not found: run scripts/fetch-zui.sh (or set CLASHFLOW_ZUI_DIST)",
+        pytrace=False,
+    )
+
+
+@pytest.fixture(scope="session")
 def metacubexd_dist() -> Path:
     env = os.environ.get("CLASHFLOW_UI_DIST")
     if env and (Path(env) / "index.html").is_file():
@@ -119,6 +136,7 @@ def boot_app(mihomo_bin: str, tmp_path_factory: pytest.TempPathFactory) -> BootA
         kernel_bin: str | None = None,
         web_dist: Path | None = None,
         ui_dist: Path | None = None,
+        zui_dist: Path | None = None,
         config_body: str | None = None,
         password: str | None = None,
     ) -> AsyncIterator[Panel]:
@@ -133,6 +151,7 @@ def boot_app(mihomo_bin: str, tmp_path_factory: pytest.TempPathFactory) -> BootA
             kernel_bin=kernel_bin or mihomo_bin,
             web_dist=web_dist,
             ui_dist=ui_dist,
+            zui_dist=zui_dist,
             # #17: every boot carries the panel password; a test may pass "" to
             # exercise the missing-CLASHFLOW_PASSWORD startup failure.
             password=TEST_PANEL_PASSWORD if password is None else password,

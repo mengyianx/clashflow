@@ -58,6 +58,8 @@ async def test_unauthenticated_access_to_every_panel_surface_is_rejected(boot_ap
 
             # The /api reverse proxy: REST is rejected before reaching the Kernel.
             assert (await anon.get("/api/version")).status_code == 401
+            assert (await anon.get("/api/panel/updates")).status_code == 401
+            assert (await anon.post("/api/panel/updates/check")).status_code == 401
             assert (await anon.get("/api/configs")).status_code == 401
 
             # The Runtime Dashboard surface: HTML navigation is redirected to
@@ -68,6 +70,13 @@ async def test_unauthenticated_access_to_every_panel_surface_is_rejected(boot_ap
             entry = await anon.get("/ui", headers=BROWSER_HEADERS)
             assert entry.status_code == 307
             assert (await anon.get("/ui/config.js")).status_code == 401
+
+            # The second Runtime Dashboard (/zui) is locked the same way.
+            zui = await anon.get("/zui/", headers=BROWSER_HEADERS)
+            assert zui.status_code == 307
+            assert zui.headers["location"] == "/"
+            assert (await anon.get("/zui", headers=BROWSER_HEADERS)).status_code == 307
+            assert (await anon.get("/zui/manifest.webmanifest")).status_code == 401
 
         # The rejected write changed nothing.
         configs = await panel.client.get("/api/panel/configs")

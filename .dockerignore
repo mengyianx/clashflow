@@ -5,3 +5,9 @@ web/dist
 .pytest_cache
 .mypy_cache
 .ruff_cache
+metacubexd
+zashboard
+**/__pycache__
+.idea
+*.iml
+clashflow.db

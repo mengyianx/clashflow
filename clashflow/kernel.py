@@ -41,6 +41,13 @@ class KernelManager:
             return self._proc.pid
         return None
 
+    def use_binary(self, path: Path | str) -> None:
+        """Point the manager at another Kernel binary (runtime update / rollback).
+
+        Callers stop the Kernel first; the next `start` spawns the new binary.
+        """
+        self._bin = str(path)
+
     @property
     def binary(self) -> str:
         """The mihomo binary this manager spawns; the apply pipeline runs the

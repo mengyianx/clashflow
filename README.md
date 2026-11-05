@@ -1,6 +1,6 @@
 # ClashFlow
 
-单容器自托管代理栈：mihomo（Kernel）+ 管理面板 + metacubexd 运行面板。一条 `docker run` 得到可用代理；订阅、纯 YAML 配置、服务控制全部在面板完成。Controller 只监听容器内回环，浏览器侧永远接触不到 API secret。
+单容器自托管代理栈：mihomo（Kernel）+ 中文管理面板 + 两套运行面板（metacubexd / zashboard）。一条 `docker run` 得到可用代理；订阅、纯 YAML 配置、服务控制全部在面板完成。Controller 只监听容器内回环，浏览器侧永远接触不到 API secret。
 
 ## 快速开始（从零到可用）
 
@@ -22,7 +22,7 @@ docker run -d --name clashflow --restart unless-stopped \
 1. 打开 `http://<网关IP>:8080`，用 `CLASHFLOW_PASSWORD` 登录。
 2. **Configs** 页：默认已有一个 `default` 配置（`mixed-port: 7890`、`allow-lan: true`）。可新建（空配置 / 空白模板）、复制为手编配置、编辑保存——保存 = 内核校验 + 原子替换 + 热载，坏配置被拒且内核错误**原样回显**、旧文件不动。
 3. **Subscriptions** 页：粘贴订阅 URL 导入（内容必须是完整的 mihomo YAML）；手动 Refresh、设置自定义 UA 与更新间隔；到期自动刷新，失败保留旧配置并标红原因，下一轮自动重试。
-4. Overview 打开 **Runtime Dashboard**（`/ui/`）：节点选择、延迟测试、连接、流量、日志，免手填端点直连面板反代。
+4. Overview 打开 **Runtime Dashboard**：`/ui/` 是 metacubexd，`/zui/` 是 zashboard，两者都免手填端点直连面板反代。
 5. LAN 设备把代理指向 `http://<网关IP>:7890`（mixed 端口，HTTP/HTTPS/SOCKS 同口，免认证）。
 
 ## 端口
@@ -42,14 +42,16 @@ docker run -d --name clashflow --restart unless-stopped \
 | `CLASHFLOW_SCHEDULER_TICK_SECONDS` | 否 | `60` | 订阅调度器巡检间隔（秒） |
 | `CLASHFLOW_RESPAWN_BASE_DELAY` | 否 | `1.0` | 内核崩溃自动拉起的指数退避基数（秒） |
 | `CLASHFLOW_MAX_RESPAWNS` | 否 | `5` | 连续崩溃拉起次数上限；超限转 `degraded`（面板红字），手动 Start 恢复 |
-| `CLASHFLOW_DATA_DIR` / `CLASHFLOW_WEB_DIST` / `CLASHFLOW_UI_DIST` | 否 | 镜像内置路径 | 数据卷与前端/运行面板产物位置，一般无需修改 |
+| `CLASHFLOW_DATA_DIR` / `CLASHFLOW_WEB_DIST` / `CLASHFLOW_UI_DIST` / `CLASHFLOW_ZUI_DIST` | 否 | 镜像内置路径 | 数据卷、面板前端、两套运行面板产物位置，一般无需修改 |
+| `CLASHFLOW_GITHUB_API` / `CLASHFLOW_GITHUB_PROXY` | 否 | `https://api.github.com` / 空 | 检查更新的 API 地址与下载/API 统一前缀（GitHub 不稳定时用） |
+| `CLASHFLOW_VERSIONS_FILE` | 否 | 镜像内 `/app/webui-versions.json` | 镜像基线版本清单，只有自建镜像才需要改 |
 
 ## 数据卷 `/data`
 
 所有状态都在一个卷里：配置与订阅（`configs/`）、元数据（`clashflow.db`：配置注册表、Active 记录、secret）、内核缓存（`cache.db`，节点选择按代理组名保留）、GEO 数据与 provider 缓存。
 
-- **备份**：拷贝整个 `/data`。
-- **迁移 / 升级**：挂回同一个卷；内核与运行面板版本随镜像 pin（当前 mihomo `v1.19.32`、metacubexd `v1.273.1`），升级 = 拉新镜像重建容器，不做容器内自升级。
+- **备份**：拷贝整个 `/data`（含 `runtime/`：运行时更新过的内核与面板）。
+- **迁移 / 升级**：挂回同一个卷；镜像内仍有 pin 的基线版本（当前 mihomo `v1.19.32`、metacubexd `v1.273.1`、zashboard `v3.30.0`），内核与运行面板可在「系统」页手动运行时更新（ADR-0003），装进 `runtime/` 且重建容器后保留；升级面板本身仍是拉新镜像重建容器。
 - 不挂卷 = 回到零配置状态并重新下载 GEO。
 
 ## 功能面
@@ -57,8 +59,12 @@ docker run -d --name clashflow --restart unless-stopped \
 - **配置管理**：多配置并存（每订阅一份派生配置 + 任意手编配置，全局唯一名）。保存 = `mihomo -t` 校验 → 原子替换 →（Active 时）热载，不重启内核；切换 Active 走同一校验+热载管线，成功才记录。订阅派生配置可手改，但编辑器会警示“下次刷新将覆盖”，并提供一键“复制为手编配置”。
 - **订阅管理**：URL 导入恰生成一份订阅派生配置，刷新只重写它自己；手动 / 定时刷新（全局默认 24h，每订阅可覆盖间隔与 UA）；失败保留旧配置、标红原因（网络/非法 YAML/校验错误分类可见），下一轮自动重试，成功即清除。
 - **服务控制**：启动 / 停止 / 重启，状态一目了然（`up` / `respawning` / `down` / `degraded`）；内核意外退出按指数退避自动拉起（始终以当前 Active Config）；GEO 自动更新由内核内置调度负责（默认模板与空白模板均已开启）。
-- **运行面板**：内嵌 metacubexd（`/ui/`，即上游 metacubexd dashboard），开箱连接，其 Profile 管理面（上游 metacubexd 功能）在静态模式下自动隐藏。
+- **运行面板**：两套上游运行面板并存——metacubexd 在 `/ui/`（静态模式下自动隐藏其 Profile 管理面），zashboard 在 `/zui/`（首次打开自动指向本面板的 `/api` 反代，并隐藏内核升级与 TUN 开关）。两者都在新标签页打开，节点选择 / 延迟测试 / 连接 / 流量 / 日志各取所需。
+- **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；概览 / 配置 / 订阅 / 运行面板四屏，YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
+- **系统与更新**：系统页手动检查 GitHub 最新发布，一键更新内核 / metacubexd / zashboard；更新包装在 `/data/runtime/`，容器重建后保留，每个组件可回滚到上一版。内核更新会自动重启内核，新二进制没起来则回滚旧版。详见 `docs/adr/0003-runtime-updates.md`。
 - **安全面**：面板密码 + 服务端会话 cookie（HttpOnly，登出即吊销）；API secret 只在服务端注入反代；Controller 仅回环监听。
+
+完整的边界清单（做什么 / 明确不做 / 量化契约 / 已知取舍）见 [`docs/scope.md`](docs/scope.md)。
 
 ## 冒烟自检（对应实现规划 M1–M5）
 
@@ -73,18 +79,41 @@ curl -s http://127.0.0.1:8080/healthz        # {"status": "ok"}
 # M3 订阅：POST /api/panel/subscriptions（导入）· POST /api/panel/subscriptions/{name}/refresh
 #         失败标红并保留旧配置；间隔覆盖 + CLASHFLOW_SCHEDULER_TICK_SECONDS 可见自动触发
 
-# M4 运行面板：浏览器打开 /ui/，切节点 / 延迟测试 / 连接 / 流量 / 日志全走 /api/* 反代（无直连 9090）
+# M4 运行面板：浏览器打开 /ui/ 与 /zui/，切节点 / 延迟测试 / 连接 / 流量 / 日志全走 /api/* 反代（无直连 9090）
 
 # M5 鉴权与交付：未登录访问任意面板路由 / API / WebSocket 被拒；多架构镜像见下
 ```
 
-## 构建镜像
+## 本地开发与测试
 
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t clashflow:local .
+python -m venv .venv && .venv/bin/pip install -e '.[dev]'
+bash scripts/fetch-kernel.sh          # 固定版本 mihomo（测试用真实内核）
+bash scripts/fetch-ui.sh              # metacubexd 静态包（/ui/）
+bash scripts/fetch-zui.sh             # zashboard 静态包（/zui/）
+(cd web && npm ci && npm run build)   # 面板前端产物（`/` 的 shell 断言依赖它）
+.venv/bin/python -m pytest -q
 ```
 
-CI（`.github/workflows/ci.yml`）在每次 push 上运行 lint / type-check / 测试，并用 buildx 构建推送多架构镜像到 GHCR（`ghcr.io/<owner>/<repo>`，分支与 commit SHA 标签；推送到集成分支 `flow` 时额外打 `latest` 标签，即快速开始引用的那个）。
+两条容易踩的坑：seam 测试绑定固定端口 9090 / 7890，跑测试前先停掉本机运行的面板或容器；`web/dist` 与三个下载包都是生成物（已 ignore），删掉后上面的准备步骤要重跑。
+
+## CI：质量门、镜像与发版
+
+本地不构建镜像，也不靠本地判断 CI 是否通过。两个 workflow：
+
+| workflow | 触发 | 做什么 |
+|---|---|---|
+| `Checks` | PR、push `flow` | 前端 `tsc --noEmit` + `vite build`（产物作为 artifact 传给后端 job）；后端 `ruff check` / `ruff format --check` / `mypy` / `pytest`（真实内核 + 两套面板产物） |
+| `Image` | PR | 对 `amd64 / arm64 / arm/v7` 各构建一次，**不推送**，只验证 Dockerfile |
+| `Image` | 手动 `workflow_dispatch` | 输入版本号后发布镜像并建 GitHub Release |
+
+发版（GitHub → Actions → Image → Run workflow，选 `flow`，填 `vX.Y.Z`；或 CLI）：
+
+```bash
+gh workflow run image.yml --ref flow -f version=v1.1.0
+```
+
+发版前先确认该 ref 的 `Checks` 为绿。产物：`ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`，多架构 `linux/amd64`、`linux/arm64`、`linux/arm/v7`，并生成同名 GitHub Release。前端与两套面板的产物在 runner 本机构建（`FROM --platform=$BUILDPLATFORM`），只有内核阶段走 QEMU。
 
 ## 限制与折衷（v1 明确取舍）
 
@@ -94,3 +123,4 @@ CI（`.github/workflows/ci.yml`）在每次 push 上运行 lint / type-check / �
 - 配置内容原样归属用户 / 供应商（`docs/adr/0001-config-ownership-verbatim-yaml.md`）：面板从不改写既有 YAML，没有覆写 / 合并层。订阅内容按 ADR-0001 原样使用——供应商 YAML 里没有 `geo-auto-update` 时 GEO 自动更新不会由面板补写，需要请在订阅内容里自行加上该键。
 - `mihomo -t` 校验有联网副作用：配置引用的 GEO 缺失时会尝试下载，下载失败判校验失败。
 - 会话保存在面板进程内存：重启面板后需重新登录。
+- 管理面板是中文单语，不做语言切换；两套运行面板都是上游界面（metacubexd 自带 en / zh / ru / ja / ko / fr / fa 并跟随浏览器语言，zashboard 自带 zh / en），面板不改写它们。内核自己写出的报错（`mihomo -t` 输出、Controller 拒绝原文）永远是英文，按原样呈现。
