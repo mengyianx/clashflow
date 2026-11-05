@@ -51,7 +51,7 @@ docker run -d --name clashflow --restart unless-stopped \
 所有状态都在一个卷里：配置与订阅（`configs/`）、元数据（`clashflow.db`：配置注册表、Active 记录、secret）、内核缓存（`cache.db`，节点选择按代理组名保留）、GEO 数据与 provider 缓存。
 
 - **备份**：拷贝整个 `/data`（含 `runtime/`：运行时更新过的内核与面板）。
-- **迁移 / 升级**：挂回同一个卷；内核与运行面板版本随镜像 pin（当前 mihomo `v1.19.32`、metacubexd `v1.273.1`、zashboard `v3.30.0`），升级 = 拉新镜像重建容器，不做容器内自升级。
+- **迁移 / 升级**：挂回同一个卷；镜像内仍有 pin 的基线版本（当前 mihomo `v1.19.32`、metacubexd `v1.273.1`、zashboard `v3.30.0`），内核与运行面板可在「系统」页手动运行时更新（ADR-0003），装进 `runtime/` 且重建容器后保留；升级面板本身仍是拉新镜像重建容器。
 - 不挂卷 = 回到零配置状态并重新下载 GEO。
 
 ## 功能面

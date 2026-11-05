@@ -157,7 +157,7 @@ def state_of(payload: list[dict[str, object]], component: str) -> dict[str, obje
     raise AssertionError(f"{component} missing from {payload}")
 
 
-async def test_dashboard_update_switches_the_served_bundle_and_rollback_restores_it(
+async def test_runtime_dashboard_update_switches_the_served_bundle_and_rollback_restores_it(
     boot_app: BootApp, fake_github: FakeGitHub, zashboard_dist: Path
 ) -> None:
     fake_github.publish(
@@ -394,7 +394,7 @@ async def test_a_failed_restore_leaves_the_kernel_stopped_and_reports_it(
     await manager.aclose()
 
 
-async def test_a_second_dashboard_update_rolls_back_to_the_first_one(
+async def test_a_second_runtime_dashboard_update_rolls_back_to_the_first_one(
     boot_app: BootApp, fake_github: FakeGitHub, zashboard_dist: Path
 ) -> None:
     fake_github.publish(
