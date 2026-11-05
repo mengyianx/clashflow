@@ -99,7 +99,7 @@ async def test_deploy_endpoint_is_same_origin_not_a_build_time_absolute_url(
         assert "https://" not in config.text
 
 
-async def test_zui_serves_the_second_dashboard_preset_to_the_panel_proxy(
+async def test_zui_serves_the_second_runtime_dashboard_preset_to_the_panel_proxy(
     boot_app: BootApp, zashboard_dist: Path
 ) -> None:
     async with boot_app(zui_dist=zashboard_dist) as panel:
