@@ -1,9 +1,14 @@
 """#14 seam tests: the panel's `/api/*` surface proxies to the Controller with the
 secret injected server-side, and panel routes / proxy routes do not shadow each other.
 
-#25 seam tests: the Management Panel is the only path to restarting or upgrading
-the Kernel and to writing the Controller's Config path — the proxy refuses those
-endpoints before anything is forwarded, and keeps forwarding everything else."""
+The shipped namespaces: the Management Panel owns `/api/panel/...` and the older
+`/api/service/...` group; every other `/api/...` path is Controller-owned and is
+forwarded verbatim.
+
+#25 seam tests: the deny list is the one place a Controller path is refused —
+the Management Panel is the only path to restarting or upgrading the Kernel and
+to writing the Controller's Config path — so the proxy refuses those endpoints
+before anything is forwarded, and keeps forwarding everything else."""
 
 import json
 import socket

@@ -1,18 +1,23 @@
 """Reverse proxy from the panel's `/api/*` surface to the loopback Controller.
 
-Routing convention (later tickets follow this):
+Routing convention (the shipped namespaces):
 - Panel API routers are included BEFORE `router` in ``main.py``; Starlette
   matches routes in registration order, so an explicitly registered panel route
   always shadows the proxy at that exact path.
-- Every other `/api/...` path is forwarded verbatim to the Controller, so
-  `/api/version`, `/api/configs`, `/api/proxies`, ... (everything the Runtime
-  Dashboard drives) belong to the Controller. New Management Panel routes
-  therefore live under `/api/panel/...`, which the Controller does not define;
-  the grandfathered exception is `/api/service/health`.
-- Three Controller endpoints are never forwarded (ticket #25): restarting or
-  upgrading the Kernel and writing the Controller's Config path belong to the
-  Management Panel alone. They are refused at this one decision point, before
-  any upstream request is made, so a denied endpoint cannot half-apply.
+- The Management Panel owns two namespaces under `/api`: `/api/panel/...`
+  (Config, Subscription, update and auth routes) and the older
+  `/api/service/...` group (Kernel health, start, stop and restart). New panel
+  routes go under `/api/panel/...`; the Controller defines neither namespace.
+- Every other `/api/...` path is Controller-owned and is forwarded verbatim:
+  `/api/version`, `/api/configs`, `/api/proxies`, ... (everything the
+  Runtime Dashboard drives).
+- The deny list (ticket #25) is the ONE place a Controller path is refused:
+  restarting or upgrading the Kernel and writing the Controller's Config path
+  belong to the Management Panel alone. The Controller's `POST /restart`,
+  `POST /upgrade` and `PUT /configs` (reached as `/api/restart`,
+  `/api/upgrade`, `/api/configs`) are refused here, before any upstream
+  request is made, so a denied endpoint cannot half-apply. `PATCH /configs`
+  (the mode switch both Runtime Dashboards drive) stays available.
 - The Bearer secret is injected server-side on every upstream request and
   WebSocket handshake; browser-supplied credentials (`Authorization` header and
   `token` query parameter) are discarded, so no browser traffic carries the
