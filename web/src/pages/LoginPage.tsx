@@ -1,5 +1,5 @@
 import { ChevronRight, Eye, EyeOff, Lock } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { ErrorBanner, useErrorBanner } from "@/components/ErrorBanner";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,10 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    document.title = "ClashFlow · 登录";
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

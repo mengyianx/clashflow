@@ -1,5 +1,6 @@
 import { ExternalLink, Home, LogOut, Moon, Rss, SlidersHorizontal, Sun } from "lucide-react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -37,8 +38,22 @@ function Brand() {
 
 /** The panel frame: sidebar on wide screens, top bar + bottom tabs on phones.
  * Every page renders inside `<Outlet/>`. */
+const TITLES: Array<[prefix: string, label: string]> = [
+  ["/configs/", "编辑器"],
+  ["/configs", "配置"],
+  ["/subscriptions", "订阅"],
+  ["/overview", "总览"],
+];
+
 export function AppShell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: () => void }) {
   const { connectionLost, markSignedOut } = useSession();
+  const { pathname } = useLocation();
+
+  // The tab keeps one short label per page instead of the long shell title.
+  useEffect(() => {
+    const label = TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "总览";
+    document.title = `ClashFlow · ${label}`;
+  }, [pathname]);
 
   const signOut = async () => {
     try {
