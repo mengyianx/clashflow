@@ -1,14 +1,10 @@
-name: CI
+name: Image
 
-# 镜像与发版全部在 GitHub 上做，本地不构建。
-#   pull_request          -> lint / 类型 / 测试，再对三种架构做一次「不推送」的
-#                            镜像构建（只验证 Dockerfile，不发版）
-#   push flow             -> 只跑质量门，不发版
-#   workflow_dispatch     -> 手动发版：发布镜像（vX.Y.Z / vX.Y / latest）并建 GitHub Release
+# 镜像由 GitHub 构建，本地不构建；发布只走手动触发。
+#   pull_request      -> 三种架构各构建一次（不推送），只验证 Dockerfile
+#   workflow_dispatch -> 输入版本号后发布镜像（vX.Y.Z / vX.Y / latest）并建 GitHub Release
 on:
   pull_request:
-  push:
-    branches: [flow]
   workflow_dispatch:
     inputs:
       version:
@@ -19,64 +15,18 @@ on:
 permissions:
   contents: read
 
-# 只取消被覆盖的 PR run；发版与分支 run 不可取消。
 concurrency:
-  group: ci-${{ github.ref }}
+  group: image-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  quality:
-    name: lint / type-check / tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Build web shell (tests serve web/dist)
-        run: |
-          cd web
-          npm ci
-          npm run build
-
-      - name: Install
-        run: pip install -e '.[dev]'
-
-      - name: Fetch pinned Kernel and dashboard bundles
-        run: |
-          bash scripts/fetch-kernel.sh
-          bash scripts/fetch-ui.sh
-          bash scripts/fetch-zui.sh
-
-      - name: Lint
-        run: |
-          ruff check .
-          ruff format --check .
-
-      - name: Type-check
-        run: mypy clashflow tests
-
-      # The seam suite binds the fixed contract ports (9090/7890) on the host,
-      # so it must run serialized — a single job is serial by construction.
-      - name: Tests
-        run: pytest -q
-
-  image:
-    name: image build (verify only)
-    # PRs validate the Dockerfile across all three platforms; nothing is pushed.
+  verify:
+    name: 三架构构建（不推送）
     if: github.event_name == 'pull_request'
-    needs: quality
     runs-on: ubuntu-latest
-    # QEMU builds can stall instead of failing; the frontend stage builds
-    # natively (Dockerfile pins $BUILDPLATFORM), and this bound keeps a future
-    # stall from eating a runner for GitHub's 6-hour default.
+    # QEMU builds can stall instead of failing; the frontend, metacubexd and
+    # zashboard stages build natively (Dockerfile pins $BUILDPLATFORM), and this
+    # bound keeps a future stall from eating a runner for GitHub's 6-hour cap.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -96,9 +46,9 @@ jobs:
           cache-to: type=gha,mode=max
 
   release:
-    name: manual release
+    name: 手动发版
+    # 手动触发；发版前请确认该 ref 的 Checks 为绿（见 .github/workflows/checks.yml）。
     if: github.event_name == 'workflow_dispatch'
-    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

@@ -1,0 +1,86 @@
+name: Checks
+
+# 代码质量与功能测试：每次 PR 与 `flow` 的提交都跑。
+#   前端  -> 类型检查 + 构建（tsc --noEmit && vite build），产物作为 artifact 交给后端
+#   后端  -> ruff / ruff format / mypy / pytest（真实 mihomo 内核 + 两套面板产物）
+on:
+  pull_request:
+  push:
+    branches: [flow]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  frontend:
+    name: 前端 类型检查 + 构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: web
+
+      # `npm run build` is `tsc --noEmit && vite build`: a type error fails here.
+      - name: Type-check and build
+        run: npm run build
+        working-directory: web
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 1
+
+  backend:
+    name: 后端 lint / 类型 / 测试
+    needs: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Install
+        run: pip install -e '.[dev]'
+
+      - name: Fetch pinned Kernel and dashboard bundles
+        run: |
+          bash scripts/fetch-kernel.sh
+          bash scripts/fetch-ui.sh
+          bash scripts/fetch-zui.sh
+
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Type-check
+        run: mypy clashflow tests
+
+      # The seam suite binds the fixed contract ports (9090/7890) on the host,
+      # so it must run serialized — a single job is serial by construction.
+      - name: Tests
+        run: pytest -q

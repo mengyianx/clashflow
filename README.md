@@ -92,23 +92,23 @@ bash scripts/fetch-zui.sh             # zashboard 静态包（/zui/）
 
 两条容易踩的坑：seam 测试绑定固定端口 9090 / 7890，跑测试前先停掉本机运行的面板或容器；`web/dist` 与三个下载包都是生成物（已 ignore），删掉后上面的准备步骤要重跑。
 
-## 镜像与发版（全部由 CI 完成，手动发版）
+## CI：质量门、镜像与发版
 
-本地不构建镜像。`.github/workflows/ci.yml` 的职责：
+本地不构建镜像，也不靠本地判断 CI 是否通过。两个 workflow：
 
-| 触发 | 做什么 |
-|---|---|
-| PR | lint / 类型 / 测试（含前端构建与内核、两套面板产物），再对 `amd64 / arm64 / arm/v7` 做一次**不推送**的镜像构建，只验证 Dockerfile |
-| push `flow` | 只跑质量门；**不发版**、不推镜像 |
-| 手动 `workflow_dispatch` | 输入版本号后发布镜像并建 GitHub Release |
+| workflow | 触发 | 做什么 |
+|---|---|---|
+| `Checks` | PR、push `flow` | 前端 `tsc --noEmit` + `vite build`（产物作为 artifact 传给后端 job）；后端 `ruff check` / `ruff format --check` / `mypy` / `pytest`（真实内核 + 两套面板产物） |
+| `Image` | PR | 对 `amd64 / arm64 / arm/v7` 各构建一次，**不推送**，只验证 Dockerfile |
+| `Image` | 手动 `workflow_dispatch` | 输入版本号后发布镜像并建 GitHub Release |
 
-发版（GitHub → Actions → CI → Run workflow，选 `flow`，填 `vX.Y.Z`；或 CLI）：
+发版（GitHub → Actions → Image → Run workflow，选 `flow`，填 `vX.Y.Z`；或 CLI）：
 
 ```bash
-gh workflow run ci.yml --ref flow -f version=v1.1.0
+gh workflow run image.yml --ref flow -f version=v1.1.0
 ```
 
-产物：`ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`，多架构 `linux/amd64`、`linux/arm64`、`linux/arm/v7`，同时生成同名 GitHub Release。前端与两套面板的产物在 runner 本机构建（`FROM --platform=$BUILDPLATFORM`），只有内核阶段走 QEMU。
+发版前先确认该 ref 的 `Checks` 为绿。产物：`ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`，多架构 `linux/amd64`、`linux/arm64`、`linux/arm/v7`，并生成同名 GitHub Release。前端与两套面板的产物在 runner 本机构建（`FROM --platform=$BUILDPLATFORM`），只有内核阶段走 QEMU。
 
 ## 限制与折衷（v1 明确取舍）
 
