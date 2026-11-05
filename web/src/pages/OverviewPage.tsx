@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type ConfigEntry, type SubscriptionEntry } from "@/lib/api";
-import { zashboardUrl } from "@/lib/dashboards";
 import { CONFIG_KIND_LABEL, KERNEL_STATE_LABEL } from "@/lib/messages";
 import { useSession } from "@/lib/session";
 import { formatTimestamp } from "@/lib/utils";
@@ -203,7 +202,7 @@ export function OverviewPage() {
                   <p className="text-xs text-ink-3">节点卡片、连接表格与规则查询</p>
                 </div>
                 <Button size="sm" className="ml-auto" asChild>
-                  <a href={zashboardUrl()} target="_blank" rel="noreferrer">
+                  <a href="/zui/" target="_blank" rel="noreferrer">
                     打开
                     <ExternalLink />
                   </a>

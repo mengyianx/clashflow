@@ -12,7 +12,6 @@ import {
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { zashboardUrl } from "@/lib/dashboards";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { Theme } from "@/hooks/useTheme";
@@ -97,7 +96,7 @@ export function AppShell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme
             Metacubexd
           </a>
           <a
-            href={zashboardUrl()}
+            href="/zui/"
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-2.5 rounded-[var(--radius-control)] px-3 py-2 text-sm text-ink-2 hover:bg-hover hover:text-ink"
@@ -173,7 +172,7 @@ export function AppShell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme
                 </a>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <a href={zashboardUrl()} target="_blank" rel="noreferrer">
+                <a href="/zui/" target="_blank" rel="noreferrer">
                   Zashboard
                 </a>
               </DropdownMenuItem>
