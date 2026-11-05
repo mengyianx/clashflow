@@ -2,6 +2,7 @@ import { ExternalLink, Home, LogOut, Moon, Rss, SlidersHorizontal, Sun } from "l
 import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import { BrandMark } from "@/components/BrandMark";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -25,9 +26,7 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
 function Brand() {
   return (
     <div className="flex items-center gap-2.5 px-2 pb-5">
-      <div className="grid size-6.5 place-items-center rounded-[9px] bg-accent-strong text-[13px] text-on-accent">
-        ◆
-      </div>
+      <BrandMark />
       <div className="leading-tight">
         <b className="block text-[15px] tracking-[0.01em]">ClashFlow</b>
         <span className="block text-[11.5px] text-ink-3">管理面板</span>
