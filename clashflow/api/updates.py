@@ -2,8 +2,9 @@
 
 Manual by design: `check` asks GitHub for the latest release of the three
 pinned artifacts, `update` installs it (the Kernel restarts itself), `rollback`
-returns to the version that was running before. Only one operation per
-component runs at a time; a second request answers 409 instead of queueing.
+returns to the version that was running before. Updates and rollbacks are
+serialised per component: a second one answers 409 instead of queueing. Checks
+run independently, so pressing update while a check is in flight is not refused.
 """
 
 import logging

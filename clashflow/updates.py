@@ -280,16 +280,23 @@ class UpdateManager:
     async def check(self) -> list[dict[str, Any]]:
         async with self._check_lock:
             for component in COMPONENTS:
-                state = _read_state(self._store, component)
+                latest: str | None = None
+                error: str | None = None
                 try:
                     release = await self.latest_release(component)
                 except UpdateError as exc:
-                    state["check_error"] = str(exc)
+                    error = str(exc)
                 else:
-                    state["latest"] = release.version
-                    state["check_error"] = None
-                state["checked_at"] = _now()
-                _write_state(self._store, component, state)
+                    latest = release.version
+                # Read-modify-write under the component's lock (no awaits inside)
+                # so a snapshot cannot overwrite what a just-finished update wrote.
+                async with self._locks[component]:
+                    state = _read_state(self._store, component)
+                    if latest is not None:
+                        state["latest"] = latest
+                    state["check_error"] = error
+                    state["checked_at"] = _now()
+                    _write_state(self._store, component, state)
         return self.state()
 
     # ---------- installing ----------
