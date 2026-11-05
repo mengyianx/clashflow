@@ -58,6 +58,7 @@ docker run -d --name clashflow --restart unless-stopped \
 - **订阅管理**：URL 导入恰生成一份订阅派生配置，刷新只重写它自己；手动 / 定时刷新（全局默认 24h，每订阅可覆盖间隔与 UA）；失败保留旧配置、标红原因（网络/非法 YAML/校验错误分类可见），下一轮自动重试，成功即清除。
 - **服务控制**：启动 / 停止 / 重启，状态一目了然（`up` / `respawning` / `down` / `degraded`）；内核意外退出按指数退避自动拉起（始终以当前 Active Config）；GEO 自动更新由内核内置调度负责（默认模板与空白模板均已开启）。
 - **运行面板**：内嵌 metacubexd（`/ui/`，即上游 metacubexd dashboard），开箱连接，其 Profile 管理面（上游 metacubexd 功能）在静态模式下自动隐藏。
+- **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；概览 / 配置 / 订阅 / 运行面板四屏，YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
 - **安全面**：面板密码 + 服务端会话 cookie（HttpOnly，登出即吊销）；API secret 只在服务端注入反代；Controller 仅回环监听。
 
 ## 冒烟自检（对应实现规划 M1–M5）
@@ -94,3 +95,4 @@ CI（`.github/workflows/ci.yml`）在每次 push 上运行 lint / type-check / �
 - 配置内容原样归属用户 / 供应商（`docs/adr/0001-config-ownership-verbatim-yaml.md`）：面板从不改写既有 YAML，没有覆写 / 合并层。订阅内容按 ADR-0001 原样使用——供应商 YAML 里没有 `geo-auto-update` 时 GEO 自动更新不会由面板补写，需要请在订阅内容里自行加上该键。
 - `mihomo -t` 校验有联网副作用：配置引用的 GEO 缺失时会尝试下载，下载失败判校验失败。
 - 会话保存在面板进程内存：重启面板后需重新登录。
+- 管理面板是中文单语，不做语言切换；运行面板是上游 metacubexd 的界面，自带 en / zh / ru / ja / ko / fr / fa 七种语言并跟随浏览器语言，面板不改写它。内核自己写出的报错（`mihomo -t` 输出、Controller 拒绝原文）永远是英文，按原样呈现。

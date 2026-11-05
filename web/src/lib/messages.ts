@@ -1,0 +1,85 @@
+import { ApiError } from "./api";
+import type { ConfigKind, KernelState, SubscriptionState } from "./api";
+
+/** UI labels for the enums the API returns (the wire values stay English). */
+export const KERNEL_STATE_LABEL: Record<KernelState, string> = {
+  up: "运行中",
+  down: "已停止",
+  respawning: "重启中",
+  degraded: "已停用（连续崩溃）",
+};
+
+export const SUBSCRIPTION_STATE_LABEL: Record<SubscriptionState, string> = {
+  ok: "正常",
+  error: "失败",
+  pending: "待首次刷新",
+};
+
+export const CONFIG_KIND_LABEL: Record<ConfigKind, string> = {
+  "hand-written": "手写配置",
+  "subscription-derived": "订阅配置",
+};
+
+/** Panel messages carry a Chinese title; the original text is always kept.
+ * Prefixes are the API's own wording, locked by the Python tests, so a backend
+ * rename breaks loudly instead of silently degrading to "操作失败". */
+const KNOWN_MESSAGES: Array<[prefix: string, title: string]> = [
+  ["subscription fetch failed", "订阅抓取失败"],
+  ["config name must not be empty or whitespace-padded", "配置名称不能为空或首尾带空白"],
+  ["config name contains characters unsafe in a filename", "配置名称含文件名不允许的字符"],
+  ["config name already registered", "配置名称已被占用"],
+  ["no such config", "配置不存在"],
+  ["config is active; activate another config before deleting", "该配置正在运行，不能删除"],
+  ["subscription already registered", "订阅名称已被占用"],
+  ["no such subscription", "订阅不存在"],
+  ["config file already exists", "同名配置文件已存在"],
+  ["config file missing", "配置文件缺失"],
+  ["config is subscription-derived; delete its subscription instead", "该配置由订阅生成，请删除对应订阅"],
+  ["subscription URL must be http(s)", "订阅地址必须是 http(s)"],
+  ["user agent must not be empty", "User-Agent 不能为空"],
+  ["user agent must not contain control characters", "User-Agent 含控制字符"],
+  ["update interval must be a positive number of minutes", "更新间隔必须是不小于 1 的整数分钟"],
+  ["kernel unreachable", "内核没有响应"],
+];
+
+const STATUS_TITLES: Record<number, string> = {
+  0: "面板连接中断",
+  400: "请求无效",
+  401: "未登录",
+  404: "目标不存在",
+  409: "操作被拒绝",
+  500: "面板出错",
+  502: "上游请求失败",
+};
+
+/** The Kernel writes its config-test output to stdout; it is never translated. */
+const KERNEL_OUTPUT = /^(level=|time=|configuration file |unsupport |yaml: )|test failed/;
+
+export interface MessageText {
+  title: string;
+  detail: string;
+}
+
+export function describeMessage(raw: string): MessageText {
+  const detail = raw.trim();
+  for (const [prefix, title] of KNOWN_MESSAGES) {
+    if (detail.startsWith(prefix)) return { title, detail };
+  }
+  if (KERNEL_OUTPUT.test(detail)) return { title: "内核校验未通过", detail };
+  return { title: "操作失败", detail };
+}
+
+export function describeError(error: unknown): MessageText {
+  if (error instanceof ApiError) {
+    if (error.status === 0) {
+      return { title: "面板连接中断", detail: "无法连接面板，请确认容器仍在运行。" };
+    }
+    const described = describeMessage(error.detail);
+    if (described.title !== "操作失败") return described;
+    return {
+      title: STATUS_TITLES[error.status] ?? `请求失败（HTTP ${error.status}）`,
+      detail: error.detail,
+    };
+  }
+  return { title: "操作失败", detail: error instanceof Error ? error.message : String(error) };
+}
