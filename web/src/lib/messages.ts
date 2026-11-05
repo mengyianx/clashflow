@@ -60,7 +60,7 @@ export interface MessageText {
   detail: string;
 }
 
-export function describeMessage(raw: string): MessageText {
+function describeMessage(raw: string): MessageText {
   const detail = raw.trim();
   for (const [prefix, title] of KNOWN_MESSAGES) {
     if (detail.startsWith(prefix)) return { title, detail };

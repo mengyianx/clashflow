@@ -1,6 +1,6 @@
 # ClashFlow
 
-单容器自托管代理栈：mihomo（Kernel）+ 管理面板 + metacubexd 运行面板。一条 `docker run` 得到可用代理；订阅、纯 YAML 配置、服务控制全部在面板完成。Controller 只监听容器内回环，浏览器侧永远接触不到 API secret。
+单容器自托管代理栈：mihomo（Kernel）+ 中文管理面板 + 两套运行面板（metacubexd / zashboard）。一条 `docker run` 得到可用代理；订阅、纯 YAML 配置、服务控制全部在面板完成。Controller 只监听容器内回环，浏览器侧永远接触不到 API secret。
 
 ## 快速开始（从零到可用）
 
@@ -49,7 +49,7 @@ docker run -d --name clashflow --restart unless-stopped \
 所有状态都在一个卷里：配置与订阅（`configs/`）、元数据（`clashflow.db`：配置注册表、Active 记录、secret）、内核缓存（`cache.db`，节点选择按代理组名保留）、GEO 数据与 provider 缓存。
 
 - **备份**：拷贝整个 `/data`。
-- **迁移 / 升级**：挂回同一个卷；内核与运行面板版本随镜像 pin（当前 mihomo `v1.19.32`、metacubexd `v1.273.1`），升级 = 拉新镜像重建容器，不做容器内自升级。
+- **迁移 / 升级**：挂回同一个卷；内核与运行面板版本随镜像 pin（当前 mihomo `v1.19.32`、metacubexd `v1.273.1`、zashboard `v3.30.0`），升级 = 拉新镜像重建容器，不做容器内自升级。
 - 不挂卷 = 回到零配置状态并重新下载 GEO。
 
 ## 功能面

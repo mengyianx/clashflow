@@ -16,7 +16,6 @@ never involved: `/api` injects it server-side (#14).
 """
 
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
