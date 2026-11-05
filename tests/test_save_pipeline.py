@@ -152,38 +152,132 @@ async def test_failed_save_leaves_no_temp_residue(boot_app) -> None:
         assert (configs_dir / "spare.yaml").read_text() == "{}\n"
 
 
-async def test_saving_the_active_config_with_a_refused_hot_apply_returns_502_and_the_new_bytes_wait_for_the_next_restart(
+async def test_saving_the_active_config_with_a_refused_hot_apply_restores_the_previous_bytes_and_answers_502(
     boot_app, monkeypatch
 ) -> None:
-    # The save pipeline's atomic swap is its point of no return (unlike the
-    # refresh pipeline, which rolls back): when the Controller refuses the
-    # forced reload the request reports 502, the new bytes stay on disk and
-    # take effect at the next (re)start, and the running Kernel keeps the old
-    # Config. Pinned so the two pipelines' trade-off never flips silently.
+    # The save pipeline's atomic swap is its point of no return: when the
+    # Controller refuses the forced reload the Kernel keeps running the old
+    # Config, so the stored file has to go back to the pre-save bytes as
+    # well — the next Kernel restart then boots the Config that is actually
+    # running, not the bytes the Controller refused. Same outcome as the
+    # Subscription refresh, through the same shared restore.
     async with boot_app() as panel:
         secret = panel.app.state.secret
         pid_before = panel.app.state.kernel.pid
+        target = panel.data_dir / "configs" / "default.yaml"
+        before = target.read_bytes()
 
         async def forced_hot_apply_failure(*args, **kwargs):
             raise HotApplyError("forced hot-apply failure")
 
-        monkeypatch.setattr("clashflow.api.configs.hot_apply", forced_hot_apply_failure)
+        monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
         resp = await panel.client.put(
             "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
         )
         assert resp.status_code == 502
         assert resp.json()["detail"] == "forced hot-apply failure"
 
-        # The new bytes are on disk (the Editor and the next restart see them)…
+        # The stored Config is byte-identical to the pre-save bytes (the
+        # Editor reads the file, so it sees the previous Config too)...
+        assert target.read_bytes() == before
         body = (await panel.client.get("/api/panel/configs/default")).json()
-        assert body["content"] == "mixed-port: 7891\nallow-lan: true\n"
-        # …while the running Kernel still serves the old Config, same process,
+        assert body["content"] == before.decode()
+        assert list(target.parent.glob("*.tmp")) == []
+        # ...while the running Kernel still serves the old Config, same process,
         # and the Active record is unchanged.
         assert panel.app.state.kernel.pid == pid_before
         assert (await _controller_configs(secret))["mixed-port"] == 7890
         health = (await panel.client.get("/api/service/health")).json()
         assert health["active_config"] == "default"
         assert health["kernel"] == "up"
+
+
+async def test_the_refusal_answer_carries_the_controller_text_verbatim(
+    boot_app, monkeypatch
+) -> None:
+    # The Controller's own refusal text is what the panel answers with:
+    # untranslated and untruncated, line breaks included. Here the refusal
+    # comes from the Controller itself (a non-2xx answer), so the text
+    # travels through the real upstream-error handling.
+    async with boot_app() as panel:
+        target = panel.data_dir / "configs" / "default.yaml"
+        before = target.read_bytes()
+        refusal = (
+            "can't update the config: listen tcp 127.0.0.1:7891: bind: address already in use\n"
+            "config file /data/configs/default.yaml test failed"
+        )
+
+        async def refusing_controller(*args, **kwargs):
+            return httpx.Response(
+                500,
+                json={"message": refusal},
+                request=httpx.Request("PUT", f"{CONTROLLER}/configs"),
+            )
+
+        monkeypatch.setattr(panel.app.state.api_client, "put", refusing_controller)
+        resp = await panel.client.put(
+            "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+        )
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == refusal
+
+        # The refused bytes never stay on disk.
+        assert target.read_bytes() == before
+
+
+async def test_saving_a_non_active_config_stores_the_bytes_without_touching_the_kernel(
+    boot_app, monkeypatch
+) -> None:
+    # A Config that is not the Active one is never hot-applied: the bytes
+    # are stored and the running Kernel keeps its own Config.
+    async with boot_app() as panel:
+        secret = panel.app.state.secret
+        pid_before = panel.app.state.kernel.pid
+        resp = await panel.client.post("/api/panel/configs", json={"name": "alt"})
+        assert resp.status_code == 201
+
+        applied: list[str] = []
+
+        async def recording_hot_apply(*args, **kwargs):
+            applied.append(str(args))
+
+        monkeypatch.setattr("clashflow.apply.hot_apply", recording_hot_apply)
+        content = "mixed-port: 7895\nallow-lan: true\n"
+        resp = await panel.client.put("/api/panel/configs/alt", content=content)
+        assert resp.status_code == 200
+        assert (panel.data_dir / "configs" / "alt.yaml").read_bytes() == content.encode()
+        assert applied == []  # no hot-apply for a Config that is not Active
+        assert panel.app.state.kernel.pid == pid_before
+        assert (await _controller_configs(secret))["mixed-port"] == 7890
+
+
+async def test_saving_while_the_kernel_is_stopped_stores_the_bytes_for_the_next_start(
+    boot_app, monkeypatch
+) -> None:
+    # No Kernel, no hot-apply, no refusal: the bytes are stored and the next
+    # start boots them.
+    async with boot_app() as panel:
+        secret = panel.app.state.secret
+        resp = await panel.client.post("/api/service/stop")
+        assert resp.status_code == 200
+        assert resp.json()["kernel"] == "down"
+
+        applied: list[str] = []
+
+        async def recording_hot_apply(*args, **kwargs):
+            applied.append(str(args))
+
+        monkeypatch.setattr("clashflow.apply.hot_apply", recording_hot_apply)
+        content = "mixed-port: 7896\nallow-lan: true\n"
+        resp = await panel.client.put("/api/panel/configs/default", content=content)
+        assert resp.status_code == 200
+        assert (panel.data_dir / "configs" / "default.yaml").read_bytes() == content.encode()
+        assert applied == []
+
+        # The next start boots the stored bytes.
+        resp = await panel.client.post("/api/service/start")
+        assert resp.status_code == 200
+        assert (await _controller_configs(secret))["mixed-port"] == 7896
 
 
 async def test_switching_active_config_hot_applies_and_records_without_restart(boot_app) -> None:
@@ -279,10 +373,16 @@ async def test_a_refused_hot_apply_keeps_the_previous_active_recorded_and_runnin
         async def forced_hot_apply_failure(*args, **kwargs):
             raise HotApplyError("forced hot-apply failure")
 
-        monkeypatch.setattr("clashflow.api.configs.hot_apply", forced_hot_apply_failure)
+        monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
         resp = await panel.client.put("/api/panel/configs/alt/active")
         assert resp.status_code == 502
         assert resp.json()["detail"] == "forced hot-apply failure"
+
+        # The switch writes nothing, so the file stays as it was: the restore
+        # belongs to the write paths (the save and the refresh).
+        assert (panel.data_dir / "configs" / "alt.yaml").read_text() == (
+            "mixed-port: 7891\nallow-lan: true\n"
+        )
 
         # The previous Active stays recorded, running, and serving.
         configs = (await panel.client.get("/api/panel/configs")).json()

@@ -75,8 +75,8 @@ web/                      # React + TS + Vite，产物嵌入后端
 ## 5. 关键流程
 
 1. **启动**：读 `clashflow.db` → 起 mihomo（`-f` 指向 Active Config 实际路径）→ 轮询 `GET /version` 就绪 → 起 scheduler。内核起不来时面板仍起，服务页红字 + 自动重试。
-2. **保存 Config**：写 `<file>.tmp` → `mihomo -d /data -t -f <tmp>` → 通过则 `os.replace` 原子替换 → 若为 Active 则 `PUT /configs {"path": "<file>"}?force=true`；失败则删 tmp、保留旧文件、校验 stderr 原样回前端。
-3. **订阅刷新**：GET（自定义 UA、超时）→ 内容必须通过校验（复用流程 2 的 `mihomo -t` tmp 流程，同样受其联网副作用限制）→ 原子替换该订阅的 Config → 是 Active 则热载；失败则旧文件不动、状态标红。
+2. **保存 Config**：写 `<file>.tmp` → `mihomo -d /data -t -f <tmp>` → 通过则 `os.replace` 原子替换 → 若为 Active 则 `PUT /configs {"path": "<file>"}?force=true`；校验失败则删 tmp、保留旧文件、校验 stderr 原样回前端；热载被控制接口拒绝则把旧字节写回磁盘（内核继续跑旧配置，下一次重启不会启动被拒绝的配置）、控制接口拒绝原文原样回前端（`502`）。
+3. **订阅刷新**：GET（自定义 UA、超时）→ 内容必须通过校验（复用流程 2 的 `mihomo -t` tmp 流程，同样受其联网副作用限制）→ 原子替换该订阅的 Config → 是 Active 则热载；失败则旧文件不动、状态标红（热载被拒绝时与流程 2 走同一条恢复实现，同样写回旧字节）。
 4. **切换 Active**：校验目标 → `PUT /configs {"path": ...}?force=true` → 成功后记录 active；失败则原 Active 不变。已选节点由 `profile.store-selected` 按 proxy-group 名匹配保留——目标 Config 的组名不同或缺失时该选择静默丢失。
 5. **崩溃拉起**：kernel 退出 → 指数退避 respawn，`-f` 指向当前 Active Config 实际路径（超限后停 + 红字）；Docker `restart: unless-stopped` 兜底。
 6. **生效语义**：热载覆盖 proxies/rules/DNS/端口（force=true 连监听器重建）；controller 类配置从不改（CLI 钉死），故无须重启内核。
