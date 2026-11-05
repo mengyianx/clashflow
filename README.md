@@ -61,6 +61,8 @@ docker run -d --name clashflow --restart unless-stopped \
 - **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；概览 / 配置 / 订阅 / 运行面板四屏，YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
 - **安全面**：面板密码 + 服务端会话 cookie（HttpOnly，登出即吊销）；API secret 只在服务端注入反代；Controller 仅回环监听。
 
+完整的边界清单（做什么 / 明确不做 / 量化契约 / 已知取舍）见 [`docs/scope.md`](docs/scope.md)。
+
 ## 冒烟自检（对应实现规划 M1–M5）
 
 ```bash
