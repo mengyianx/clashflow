@@ -17,9 +17,19 @@ _中文_: 管理面板
 _Avoid_: dashboard
 
 **Runtime Dashboard**:
-The bundled metacubexd web interface used for runtime operations against the Kernel API (node selection, delay tests, connection and traffic monitoring).
+A bundled upstream web interface used for runtime operations against the Kernel API (node selection, delay tests, connection and traffic monitoring); the image ships two, metacubexd under `/ui/` and zashboard under `/zui/`.
 _中文_: 运行面板
 _Avoid_: dashboard
+
+**Runtime Update**:
+A manual move of the Kernel or a Runtime Dashboard to a newer upstream release. Installed versions live in the data volume with one version kept for undo; the image still supplies the baseline.
+_中文_: 运行时更新
+_Avoid_: upgrade
+
+**Image Baseline**:
+The version of the Kernel or a Runtime Dashboard that ships inside the image and runs when no Runtime Update is installed.
+_中文_: 镜像基线
+_Avoid_: default version
 
 **Subscription**:
 A remote URL that yields a complete mihomo YAML Config; ClashFlow fetches it to refresh exactly one Config.

@@ -47,7 +47,7 @@
 
 ### 界面
 
-- 管理面板中文单语，浅色默认、可切深色并跟随系统；桌面左侧栏、手机底部标签；概览 / 配置 / 订阅 / 编辑器四屏 + 两套运行面板入口。
+- 管理面板中文单语，浅色默认、可切深色并跟随系统；桌面左侧栏、手机底部标签；概览 / 配置 / 订阅 / 编辑器 / 系统五屏 + 两套运行面板入口。
 - YAML 编辑器（CodeMirror 6，行号 + 语法高亮）；成功走 toast，失败走顶部常驻条：中文标题 + 原文（内核输出不翻译、不截断）。
 - 两套运行面板保持上游界面与语言（metacubexd 自带 en/zh/ru/ja/ko/fr/fa 并跟随浏览器语言，zashboard 自带 zh/en），面板不改写。
 
@@ -79,7 +79,7 @@
 |---|---|
 | 端口 | `7890` 代理（mixed，LAN 免认证）、`8080` 面板（HTTP）、`9090` Controller（仅容器内回环） |
 | 必填环境变量 | `CLASHFLOW_PASSWORD` |
-| 可选环境变量 | `CLASHFLOW_SECRET`、`CLASHFLOW_SCHEDULER_TICK_SECONDS`（60）、`CLASHFLOW_RESPAWN_BASE_DELAY`（1.0）、`CLASHFLOW_MAX_RESPAWNS`（5）、`CLASHFLOW_DATA_DIR` / `_WEB_DIST` / `_UI_DIST` / `_ZUI_DIST`、`CLASHFLOW_BIND`（0.0.0.0）/ `CLASHFLOW_PORT`（8080） |
+| 可选环境变量 | `CLASHFLOW_SECRET`、`CLASHFLOW_SCHEDULER_TICK_SECONDS`（60）、`CLASHFLOW_RESPAWN_BASE_DELAY`（1.0）、`CLASHFLOW_MAX_RESPAWNS`（5）、`CLASHFLOW_DATA_DIR` / `_WEB_DIST` / `_UI_DIST` / `_ZUI_DIST`、`CLASHFLOW_BIND`（0.0.0.0）/ `CLASHFLOW_PORT`（8080）、`CLASHFLOW_GITHUB_API`（`https://api.github.com`）/ `CLASHFLOW_GITHUB_PROXY`（空） |
 | 配置名规则 | 非空、首尾无空白、不等于 `.` / `..`、不含 `/` `\` NUL |
 | 订阅抓取 | 超时 30 s、默认 UA `ClashFlow/0.1`、默认间隔 1440 min |
 | 会话 | 7 天，进程内存，登出即吊销 |
