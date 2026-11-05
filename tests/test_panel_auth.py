@@ -58,6 +58,8 @@ async def test_unauthenticated_access_to_every_panel_surface_is_rejected(boot_ap
 
             # The /api reverse proxy: REST is rejected before reaching the Kernel.
             assert (await anon.get("/api/version")).status_code == 401
+            assert (await anon.get("/api/panel/updates")).status_code == 401
+            assert (await anon.post("/api/panel/updates/check")).status_code == 401
             assert (await anon.get("/api/configs")).status_code == 401
 
             # The Runtime Dashboard surface: HTML navigation is redirected to

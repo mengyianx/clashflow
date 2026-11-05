@@ -39,6 +39,18 @@ export interface SubscriptionEntry {
   update_interval_minutes: number | null;
 }
 
+export type UpdateComponent = "kernel" | "metacubexd" | "zashboard";
+
+export interface UpdateState {
+  component: UpdateComponent;
+  current: string;
+  source: "image" | "runtime";
+  previous: string | null;
+  latest: string | null;
+  checked_at: string | null;
+  error: string | null;
+}
+
 export interface SubscriptionSettings {
   user_agent?: string | null;
   update_interval_minutes?: number | null;
@@ -125,6 +137,15 @@ export const api = {
       }),
     activate: (name: string) => request<ConfigEntry>(`${panel(name)}/active`, { method: "PUT" }),
     remove: (name: string) => request<{ deleted: string }>(panel(name), { method: "DELETE" }),
+  },
+
+  updates: {
+    list: () => request<UpdateState[]>("/api/panel/updates"),
+    check: () => request<UpdateState[]>("/api/panel/updates/check", { method: "POST" }),
+    update: (component: UpdateComponent) =>
+      request<UpdateState[]>(`/api/panel/updates/${component}/update`, { method: "POST" }),
+    rollback: (component: UpdateComponent) =>
+      request<UpdateState[]>(`/api/panel/updates/${component}/rollback`, { method: "POST" }),
   },
 
   subscriptions: {

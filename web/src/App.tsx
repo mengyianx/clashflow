@@ -9,6 +9,7 @@ import { ConfigsPage } from "@/pages/ConfigsPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { SubscriptionsPage } from "@/pages/SubscriptionsPage";
+import { SystemPage } from "@/pages/SystemPage";
 
 // CodeMirror is the heaviest dependency and only the editor route needs it.
 const EditorPage = lazy(() =>
@@ -40,6 +41,7 @@ function AppRoutes() {
               }
             />
             <Route path="/subscriptions" element={<SubscriptionsPage />} />
+            <Route path="/system" element={<SystemPage />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Route>
         ) : (

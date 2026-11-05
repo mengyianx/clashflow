@@ -40,6 +40,17 @@ const KNOWN_MESSAGES: Array<[prefix: string, title: string]> = [
   ["user agent must not contain control characters", "User-Agent 含控制字符"],
   ["update interval must be a positive number of minutes", "更新间隔必须是不小于 1 的整数分钟"],
   ["kernel unreachable", "内核没有响应"],
+  ["release check failed", "检查更新失败"],
+  ["download failed", "下载失败"],
+  ["bundle has no index.html", "更新包不含入口页面"],
+  ["bundle is missing asset", "更新包缺少静态资源"],
+  ["bundle references no script", "更新包不是完整面板"],
+  ["archive could not be extracted", "更新包无法解压"],
+  ["kernel update rolled back", "内核更新失败，已回滚"],
+  ["the new kernel did not become ready", "新内核没有启动成功"],
+  ["no previous version to roll back to", "没有可回滚的版本"],
+  ["the previous version is no longer on disk", "上一版文件已不在磁盘上"],
+  ["an update is already running", "已有更新正在进行"],
 ];
 
 const STATUS_TITLES: Record<number, string> = {

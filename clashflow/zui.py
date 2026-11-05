@@ -57,7 +57,7 @@ async def zashboard_index(request: Request) -> HTMLResponse:
     Served by the panel rather than the static mount so a direct visit (a
     bookmark, no hash) still lands on a connected dashboard.
     """
-    dist = request.app.state.zui_dist
+    dist = request.app.state.resolve_ui("zashboard")
     index = dist / "index.html"
     if not index.is_file():
         raise HTTPException(status_code=404, detail=f"zashboard bundle missing: {index}")

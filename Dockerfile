@@ -59,6 +59,11 @@ RUN apk add --no-cache curl unzip \
 
 # --- Runtime: tini (PID 1) + Management Panel + Kernel ---
 FROM python:3.14-slim
+# Baseline versions this image ships; the panel's System page compares them
+# with GitHub when the user checks for updates (ADR-0003).
+ARG MIHOMO_VERSION=v1.19.32
+ARG METACUBEXD_VERSION=v1.273.1
+ARG ZASHBOARD_VERSION=v3.30.0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tini \
  && rm -rf /var/lib/apt/lists/*
@@ -70,6 +75,9 @@ COPY --from=kernel /tmp/mihomo /usr/local/bin/mihomo
 COPY --from=web /src/dist /app/web/dist
 COPY --from=ui /dist /app/metacubexd
 COPY --from=zui /dist/dist /app/zashboard
+RUN printf '{"kernel":"%s","metacubexd":"%s","zashboard":"%s"}\n' \
+      "$MIHOMO_VERSION" "$METACUBEXD_VERSION" "$ZASHBOARD_VERSION" \
+      > /app/webui-versions.json
 
 ENV CLASHFLOW_DATA_DIR=/data \
     CLASHFLOW_WEB_DIST=/app/web/dist \

@@ -1,4 +1,4 @@
-import { ExternalLink, Home, LogOut, Moon, Rss, SlidersHorizontal, Sun } from "lucide-react";
+import { ExternalLink, Home, LogOut, Moon, Rss, Settings2, SlidersHorizontal, Sun } from "lucide-react";
 import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -21,6 +21,7 @@ const NAV = [
   { to: "/overview", label: "总览", Icon: Home },
   { to: "/configs", label: "配置", Icon: SlidersHorizontal },
   { to: "/subscriptions", label: "订阅", Icon: Rss },
+  { to: "/system", label: "系统", Icon: Settings2 },
 ];
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
@@ -48,6 +49,7 @@ const TITLES: Array<[prefix: string, label: string]> = [
   ["/configs/", "编辑器"],
   ["/configs", "配置"],
   ["/subscriptions", "订阅"],
+  ["/system", "系统"],
   ["/overview", "总览"],
 ];
 

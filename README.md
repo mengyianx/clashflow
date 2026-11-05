@@ -43,12 +43,14 @@ docker run -d --name clashflow --restart unless-stopped \
 | `CLASHFLOW_RESPAWN_BASE_DELAY` | 否 | `1.0` | 内核崩溃自动拉起的指数退避基数（秒） |
 | `CLASHFLOW_MAX_RESPAWNS` | 否 | `5` | 连续崩溃拉起次数上限；超限转 `degraded`（面板红字），手动 Start 恢复 |
 | `CLASHFLOW_DATA_DIR` / `CLASHFLOW_WEB_DIST` / `CLASHFLOW_UI_DIST` / `CLASHFLOW_ZUI_DIST` | 否 | 镜像内置路径 | 数据卷、面板前端、两套运行面板产物位置，一般无需修改 |
+| `CLASHFLOW_GITHUB_API` / `CLASHFLOW_GITHUB_PROXY` | 否 | `https://api.github.com` / 空 | 检查更新的 API 地址与下载/API 统一前缀（GitHub 不稳定时用） |
+| `CLASHFLOW_VERSIONS_FILE` | 否 | 镜像内 `/app/webui-versions.json` | 镜像基线版本清单，只有自建镜像才需要改 |
 
 ## 数据卷 `/data`
 
 所有状态都在一个卷里：配置与订阅（`configs/`）、元数据（`clashflow.db`：配置注册表、Active 记录、secret）、内核缓存（`cache.db`，节点选择按代理组名保留）、GEO 数据与 provider 缓存。
 
-- **备份**：拷贝整个 `/data`。
+- **备份**：拷贝整个 `/data`（含 `runtime/`：运行时更新过的内核与面板）。
 - **迁移 / 升级**：挂回同一个卷；内核与运行面板版本随镜像 pin（当前 mihomo `v1.19.32`、metacubexd `v1.273.1`、zashboard `v3.30.0`），升级 = 拉新镜像重建容器，不做容器内自升级。
 - 不挂卷 = 回到零配置状态并重新下载 GEO。
 
@@ -59,6 +61,7 @@ docker run -d --name clashflow --restart unless-stopped \
 - **服务控制**：启动 / 停止 / 重启，状态一目了然（`up` / `respawning` / `down` / `degraded`）；内核意外退出按指数退避自动拉起（始终以当前 Active Config）；GEO 自动更新由内核内置调度负责（默认模板与空白模板均已开启）。
 - **运行面板**：两套上游运行面板并存——metacubexd 在 `/ui/`（静态模式下自动隐藏其 Profile 管理面），zashboard 在 `/zui/`（首次打开自动指向本面板的 `/api` 反代，并隐藏内核升级与 TUN 开关）。两者都在新标签页打开，节点选择 / 延迟测试 / 连接 / 流量 / 日志各取所需。
 - **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；概览 / 配置 / 订阅 / 运行面板四屏，YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
+- **系统与更新**：系统页手动检查 GitHub 最新发布，一键更新内核 / metacubexd / zashboard；更新包装在 `/data/runtime/`，容器重建后保留，每个组件可回滚到上一版。内核更新会自动重启内核，新二进制没起来则回滚旧版。详见 `docs/adr/0003-runtime-updates.md`。
 - **安全面**：面板密码 + 服务端会话 cookie（HttpOnly，登出即吊销）；API secret 只在服务端注入反代；Controller 仅回环监听。
 
 完整的边界清单（做什么 / 明确不做 / 量化契约 / 已知取舍）见 [`docs/scope.md`](docs/scope.md)。
