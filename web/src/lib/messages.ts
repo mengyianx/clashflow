@@ -1,5 +1,10 @@
 import { ApiError } from "./api";
-import type { ConfigKind, KernelState, SubscriptionState } from "./api";
+import type {
+  ConfigKind,
+  KernelState,
+  SubscriptionFailureClass,
+  SubscriptionState,
+} from "./api";
 
 /** UI labels for the enums the API returns (the wire values stay English). */
 export const KERNEL_STATE_LABEL: Record<KernelState, string> = {
@@ -18,6 +23,15 @@ export const SUBSCRIPTION_STATE_LABEL: Record<SubscriptionState, string> = {
 export const CONFIG_KIND_LABEL: Record<ConfigKind, string> = {
   "hand-written": "手写配置",
   "subscription-derived": "订阅配置",
+};
+
+/** The class of a failed Subscription refresh (ticket #27): the Chinese name
+ * of the class, shown above the raw error text. The wire values stay
+ * English; the raw text below is never translated. */
+export const SUBSCRIPTION_FAILURE_CLASS_LABEL: Record<SubscriptionFailureClass, string> = {
+  network: "网络故障",
+  "kernel-rejected": "内核拒绝",
+  "hot-apply-refused": "热载被拒",
 };
 
 /** Panel messages carry a Chinese title; the original text is always kept.

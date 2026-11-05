@@ -23,7 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, type SubscriptionEntry } from "@/lib/api";
-import { SUBSCRIPTION_STATE_LABEL } from "@/lib/messages";
+import { SUBSCRIPTION_FAILURE_CLASS_LABEL, SUBSCRIPTION_STATE_LABEL } from "@/lib/messages";
 import { formatTimestamp } from "@/lib/utils";
 
 interface Draft {
@@ -143,10 +143,19 @@ export function SubscriptionsPage() {
     }));
   };
 
-  const failureLine = (entry: SubscriptionEntry) =>
-    entry.state === "error" && entry.last_error ? (
-      <p className="mt-1 font-mono text-[11.5px] break-words text-bad">{entry.last_error}</p>
-    ) : null;
+  const failureLine = (entry: SubscriptionEntry) => {
+    if (entry.state !== "error" || !entry.last_error) return null;
+    return (
+      <div className="mt-1">
+        {entry.last_error_class ? (
+          <div className="text-[11.5px] font-medium text-bad">
+            {SUBSCRIPTION_FAILURE_CLASS_LABEL[entry.last_error_class]}
+          </div>
+        ) : null}
+        <p className="font-mono text-[11.5px] break-words text-bad">{entry.last_error}</p>
+      </div>
+    );
+  };
 
   return (
     <>
