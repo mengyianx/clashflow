@@ -1,21 +1,25 @@
 name: CI
 
-# Images and releases are GitHub's job: nothing here builds locally.
-#   pull_request  -> lint / type-check / tests, then a multi-arch image BUILD
-#                    with no push (the Dockerfile is still validated)
-#   push flow     -> the same, plus publish of branch / sha / latest tags
-#   push v* tag   -> publish semver tags and open a GitHub Release
+# 镜像与发版全部在 GitHub 上做，本地不构建。
+#   pull_request          -> lint / 类型 / 测试，再对三种架构做一次「不推送」的
+#                            镜像构建（只验证 Dockerfile，不发版）
+#   push flow             -> 只跑质量门，不发版
+#   workflow_dispatch     -> 手动发版：发布镜像（vX.Y.Z / vX.Y / latest）并建 GitHub Release
 on:
+  pull_request:
   push:
     branches: [flow]
-    tags: ["v*"]
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的版本号，格式 vX.Y.Z"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
-# A superseded PR run is wasted work; branch and tag runs are not cancellable
-# because they publish artifacts.
+# 只取消被覆盖的 PR run；发版与分支 run 不可取消。
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -65,16 +69,15 @@ jobs:
         run: pytest -q
 
   image:
-    name: image ${{ github.event_name == 'push' && 'publish' || 'build' }}
+    name: image build (verify only)
+    # PRs validate the Dockerfile across all three platforms; nothing is pushed.
+    if: github.event_name == 'pull_request'
     needs: quality
     runs-on: ubuntu-latest
-    # QEMU builds can stall instead of failing; the frontend stage now builds
+    # QEMU builds can stall instead of failing; the frontend stage builds
     # natively (Dockerfile pins $BUILDPLATFORM), and this bound keeps a future
     # stall from eating a runner for GitHub's 6-hour default.
     timeout-minutes: 45
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -82,58 +85,80 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Log in to GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
+      # arm/v7 is best-effort: only the Kernel stage is emulated.
+      - name: Build (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: manual release
+    if: github.event_name == 'workflow_dispatch'
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version
+        run: |
+          v="${{ inputs.version }}"
+          if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::版本号必须形如 v1.2.3，收到：$v"
+            exit 1
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "MINOR=${v%.*}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Branch / sha on `flow`, semver on tags; `latest` only from `flow`, which
-      # is what README's quick start pins.
       - name: Tags and labels
         uses: docker/metadata-action@v5
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=ref,event=branch
-            type=sha
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/flow' }}
+            type=raw,value=${{ env.VERSION }}
+            type=raw,value=${{ env.MINOR }}
+            type=raw,value=latest
 
-      # arm/v7 is best-effort: the frontend, metacubexd and zashboard stages
-      # build on the runner's own platform, so only the Kernel stage emulates.
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
-          # PRs validate the build; only pushes publish.
-          push: ${{ github.event_name == 'push' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  release:
-    name: github release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: image
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          body: |
-            Container image:
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > /tmp/notes.md <<EOF
+          容器镜像（linux/amd64、linux/arm64、linux/arm/v7）：
 
-            ```
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ```
+          \`\`\`
+          ghcr.io/${{ github.repository }}:$VERSION
+          \`\`\`
 
-            Multi-arch: `linux/amd64`, `linux/arm64`, `linux/arm/v7`.
+          发版提交：${{ github.sha }}
+          EOF
+          gh release create "$VERSION" --title "$VERSION" --notes-file /tmp/notes.md
