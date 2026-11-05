@@ -231,7 +231,8 @@ class StubKernel:
 
     def __init__(self, binary: Path, *, ready: bool = True) -> None:
         self._bin = str(binary)
-        self._ready = ready
+        self.ready = ready
+        self.fail_start = False
         self.running = True
         self.starts: list[str] = []
         self.stops = 0
@@ -240,9 +241,15 @@ class StubKernel:
         return self.running
 
     async def probe(self, secret: str) -> bool:
-        return self._ready
+        return self.ready
 
     def start(self, config_path: Path, secret: str) -> None:
+        # `Popen` fails on a missing binary, so the double must too: a dangling
+        # or self-referential pointer then shows up as a failure, not a pass.
+        if not Path(self._bin).exists():
+            raise FileNotFoundError(self._bin)
+        if self.fail_start:
+            raise OSError(f"cannot execute {self._bin}")
         self.running = True
         self.starts.append(self._bin)
 
@@ -293,7 +300,8 @@ async def test_kernel_update_restarts_and_rolls_back_when_the_new_binary_never_a
     with pytest.raises(UpdateError) as excinfo:
         await manager.update("kernel")
     assert "rolled back" in str(excinfo.value)
-    # The supervisor is back on the previous binary and the pointer is gone.
+    # The previous version was the Image Baseline, so the supervisor falls back
+    # to the image binary and no pointer is left behind.
     assert kernel.binary == str(old)
     assert not manager.kernel_pointer().is_symlink()
     await manager.aclose()
@@ -323,3 +331,89 @@ async def test_kernel_update_switches_the_pointer_and_keeps_the_previous_binary(
     assert kernel.binary == str(old)
     assert not manager.kernel_pointer().is_symlink()
     await manager.aclose()
+
+
+async def test_a_second_kernel_update_rolls_back_to_the_version_it_replaced(
+    tmp_path: Path, fake_github: FakeGitHub
+) -> None:
+    old = tmp_path / "old-mihomo"
+    old.write_text("#!/bin/sh\nexit 0\n")
+    kernel = StubKernel(old)
+    manager = kernel_manager(tmp_path, kernel, fake_github.url)
+
+    fake_github.publish(
+        "MetaCubeX/mihomo", "v9.9.9", "mihomo-linux-amd64-v9.9.9.gz", kernel_archive("v9.9.9")
+    )
+    await manager.update("kernel")
+    landed = manager.kernel_pointer().resolve()
+
+    kernel.ready = False
+    fake_github.publish(
+        "MetaCubeX/mihomo", "v9.9.10", "mihomo-linux-amd64-v9.9.10.gz", kernel_archive("v9.9.10")
+    )
+    with pytest.raises(UpdateError) as excinfo:
+        await manager.update("kernel")
+    assert "rolled back" in str(excinfo.value)
+    # The previous version was itself a runtime install, so it stays on disk and
+    # the pointer goes back to it instead of being dropped.
+    assert manager.kernel_pointer().is_symlink()
+    assert manager.kernel_pointer().resolve() == landed
+    assert Path(kernel.binary).resolve() == landed
+    assert kernel.alive()
+    assert state_of(manager.state(), "kernel")["current"] == "v9.9.9"
+    await manager.aclose()
+
+
+async def test_a_failed_restore_leaves_the_kernel_stopped_and_reports_it(
+    tmp_path: Path, fake_github: FakeGitHub
+) -> None:
+    old = tmp_path / "old-mihomo"
+    old.write_text("#!/bin/sh\nexit 0\n")
+    kernel = StubKernel(old)
+    manager = kernel_manager(tmp_path, kernel, fake_github.url)
+
+    fake_github.publish(
+        "MetaCubeX/mihomo", "v9.9.9", "mihomo-linux-amd64-v9.9.9.gz", kernel_archive("v9.9.9")
+    )
+    await manager.update("kernel")
+    landed = manager.kernel_pointer().resolve()
+
+    kernel.fail_start = True
+    fake_github.publish(
+        "MetaCubeX/mihomo", "v9.9.10", "mihomo-linux-amd64-v9.9.10.gz", kernel_archive("v9.9.10")
+    )
+    with pytest.raises(UpdateError) as excinfo:
+        await manager.update("kernel")
+    assert "start it manually" in str(excinfo.value)
+    # The Kernel is honestly down and still pointed at the previous version;
+    # nothing claims it is running.
+    assert not kernel.alive()
+    assert manager.kernel_pointer().resolve() == landed
+    assert state_of(manager.state(), "kernel")["current"] == "v9.9.9"
+    await manager.aclose()
+
+
+async def test_a_second_dashboard_update_rolls_back_to_the_first_one(
+    boot_app: BootApp, fake_github: FakeGitHub, zashboard_dist: Path
+) -> None:
+    fake_github.publish(
+        "Zephyruso/zashboard", "v9.9.9", "dist-no-fonts.zip", ui_bundle("BUNDLE_A"), redirect=True
+    )
+    async with boot_app(zui_dist=zashboard_dist) as panel:
+        assert (await panel.client.post("/api/panel/updates/zashboard/update")).status_code == 200
+        fake_github.publish(
+            "Zephyruso/zashboard",
+            "v9.9.10",
+            "dist-no-fonts.zip",
+            ui_bundle("BUNDLE_B"),
+            redirect=True,
+        )
+        assert (await panel.client.post("/api/panel/updates/zashboard/update")).status_code == 200
+        assert "BUNDLE_B" in (await panel.client.get("/zui/")).text
+
+        rolled = await panel.client.post("/api/panel/updates/zashboard/rollback")
+        assert rolled.status_code == 200, rolled.text
+        assert state_of(rolled.json(), "zashboard")["current"] == "v9.9.9"
+        served = await panel.client.get("/zui/")
+        assert "BUNDLE_A" in served.text
+        assert "BUNDLE_B" not in served.text

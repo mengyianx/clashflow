@@ -370,7 +370,7 @@ class UpdateManager:
                     "downloaded kernel reported an unexpected version: "
                     f"{(probe.stdout + probe.stderr).strip()[:200]}"
                 )
-        previous_path = self.kernel_binary()
+        previous_path = self.kernel_binary().resolve()
         previous_version, previous_source = self._current_kernel_version()
         previous = {
             "version": (state.get("current") or {}).get("version") or previous_version,
@@ -389,7 +389,9 @@ class UpdateManager:
         """Point the supervisor at `binary`; restart, and undo everything if the
         new Kernel never answers."""
         was_running = self._kernel.alive()
-        old_binary = self._kernel.binary
+        # Capture the concrete target now: once the pointer is swapped it names
+        # the new version, so the old one is unrecoverable from the pointer.
+        old_target = Path(self._kernel.binary).resolve()
         if Path(binary).resolve() == self._image_kernel.resolve():
             # Back to the image's binary: no pointer is better than a pointer
             # into the image, which would go stale when the image is replaced.
@@ -406,10 +408,7 @@ class UpdateManager:
                     raise UpdateError("the new kernel did not become ready")
             except Exception as exc:
                 self._kernel.stop()
-                self._kernel.use_binary(old_binary)
-                if self.kernel_pointer().exists() or self.kernel_pointer().is_symlink():
-                    self.kernel_pointer().unlink(missing_ok=True)
-                self._kernel.start(self._kernel.active_config_path(), self._secret)
+                self._restore_kernel(old_target)
                 raise UpdateError(f"kernel update rolled back: {exc}") from exc
         current = {"version": version, "path": str(binary), "source": "runtime"}
         if previous is not None:
@@ -421,6 +420,29 @@ class UpdateManager:
         state["checked_at"] = _now()
         state["check_error"] = None
         _write_state(self._store, KERNEL, state)
+
+    def _restore_kernel(self, target: Path) -> None:
+        """Run the Kernel from `target` again after a switch that failed.
+
+        A previous runtime version is still on disk, so the pointer goes back to
+        it; the Image Baseline gets no pointer (it would go stale when the image
+        is replaced). If the old Kernel cannot be spawned either it is left
+        stopped and reported — never left looking alive.
+        """
+        pointer = self.kernel_pointer()
+        if target.is_file() and target != self._image_kernel.resolve():
+            self._link(pointer, target)
+            self._kernel.use_binary(pointer)
+        else:
+            pointer.unlink(missing_ok=True)
+            self._kernel.use_binary(self._image_kernel)
+        try:
+            self._kernel.start(self._kernel.active_config_path(), self._secret)
+        except Exception as exc:
+            self._kernel.stop()
+            raise UpdateError(
+                f"kernel stopped after a failed update: {exc}; start it manually"
+            ) from exc
 
     async def _install_ui(self, component: str, release: Release, state: dict[str, Any]) -> None:
         asset = UI_ASSET[component]
@@ -438,7 +460,7 @@ class UpdateManager:
         validate_bundle(staging)
         shutil.rmtree(target, ignore_errors=True)
         os.replace(staging, target)
-        previous_path = self.ui_dist(component)
+        previous_path = self.ui_dist(component).resolve()
         previous_version, previous_source = self._current_ui_version(component)
         previous = {
             "version": (state.get("current") or {}).get("version") or previous_version,
