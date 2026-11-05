@@ -40,6 +40,20 @@ RUN apk add --no-cache curl \
  && mkdir /dist \
  && tar -xzf /tmp/compressed-dist.tgz -C /dist
 
+# --- Second Runtime Dashboard (zashboard), pinned static release bundle ---
+FROM alpine:3.22 AS zui
+ARG ZASHBOARD_VERSION=v3.30.0
+# dist-no-fonts: the dashboard borrows the client's system fonts (the panel's
+# own CJK stack), keeping the image ~3 MB smaller than the bundled-font builds.
+RUN apk add --no-cache curl unzip \
+ && curl -sSfL \
+      "https://github.com/Zephyruso/zashboard/releases/download/${ZASHBOARD_VERSION}/dist-no-fonts.zip" \
+      -o /tmp/zui.zip \
+ && actual="$(sha256sum /tmp/zui.zip | cut -d' ' -f1)" \
+ && [ "$actual" = "ec794e7c4daf4c839ecbc0a1292fdaf7bc7a6e3e4a4ce284db2b32379145c278" ] \
+ && mkdir /dist \
+ && unzip -q /tmp/zui.zip -d /dist
+
 # --- Runtime: tini (PID 1) + Management Panel + Kernel ---
 FROM python:3.14-slim
 RUN apt-get update \
@@ -52,10 +66,12 @@ RUN pip install --no-cache-dir .
 COPY --from=kernel /tmp/mihomo /usr/local/bin/mihomo
 COPY --from=web /src/dist /app/web/dist
 COPY --from=ui /dist /app/metacubexd
+COPY --from=zui /dist/dist /app/zashboard
 
 ENV CLASHFLOW_DATA_DIR=/data \
     CLASHFLOW_WEB_DIST=/app/web/dist \
-    CLASHFLOW_UI_DIST=/app/metacubexd
+    CLASHFLOW_UI_DIST=/app/metacubexd \
+    CLASHFLOW_ZUI_DIST=/app/zashboard
 VOLUME /data
 EXPOSE 7890 8080
 # /healthz is the unauthenticated panel liveness surface (#17): it answers

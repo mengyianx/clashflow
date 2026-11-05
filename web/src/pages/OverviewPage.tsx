@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type ConfigEntry, type SubscriptionEntry } from "@/lib/api";
+import { zashboardUrl } from "@/lib/dashboards";
 import { CONFIG_KIND_LABEL, KERNEL_STATE_LABEL } from "@/lib/messages";
 import { useSession } from "@/lib/session";
 import { formatTimestamp } from "@/lib/utils";
@@ -71,8 +72,8 @@ export function OverviewPage() {
 
       <ErrorBanner banner={banner} onDismiss={clear} />
 
-      <div className="grid grid-cols-1 items-start gap-4.5 md:grid-cols-12">
-        <Card className="md:col-span-7">
+      <div className="grid grid-cols-1 gap-4.5 md:grid-cols-12">
+        <Card className="flex flex-col md:col-span-7">
           <CardHeader>
             <CardTitle>内核状态</CardTitle>
             <Badge
@@ -83,7 +84,7 @@ export function OverviewPage() {
               {stateLabel}
             </Badge>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex flex-1 flex-col">
             <dl className="divide-y divide-line-soft text-[13.5px]">
               <div className="flex justify-between gap-3 py-2.5">
                 <dt className="text-ink-3">自动拉起</dt>
@@ -94,7 +95,7 @@ export function OverviewPage() {
                 <dd className="font-mono text-[12.5px]">{health?.active_config || "—"}</dd>
               </div>
             </dl>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-auto flex flex-wrap gap-2 pt-4">
               {health?.kernel === "up" ? (
                 <>
                   <Button onClick={() => void runServiceAction("stop")} disabled={busy !== null}>
@@ -120,11 +121,11 @@ export function OverviewPage() {
           </CardContent>
         </Card>
 
-        <Card className="md:col-span-5">
+        <Card className="flex flex-col md:col-span-5">
           <CardHeader>
             <CardTitle>当前配置</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex flex-1 flex-col">
             <p className="font-serif text-[26px] leading-none">{health?.active_config || "—"}</p>
             <dl className="mt-3 divide-y divide-line-soft text-[13.5px]">
               <div className="flex justify-between gap-3 py-2.5">
@@ -142,7 +143,7 @@ export function OverviewPage() {
                 </dd>
               </div>
             </dl>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-auto flex flex-wrap gap-2 pt-4">
               <Button
                 variant="primary"
                 disabled={!health?.active_config}
@@ -156,12 +157,12 @@ export function OverviewPage() {
           </CardContent>
         </Card>
 
-        <Card className="md:col-span-7">
+        <Card className="flex flex-col md:col-span-5">
           <CardHeader>
             <CardTitle>订阅概览</CardTitle>
             <Badge className="ml-auto">{subscriptions?.length ?? 0} 份</Badge>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex flex-1 flex-col">
             <dl className="divide-y divide-line-soft text-[13.5px]">
               <div className="flex justify-between gap-3 py-2.5">
                 <dt className="text-ink-3">最近刷新</dt>
@@ -172,28 +173,46 @@ export function OverviewPage() {
                 <dd>{subscriptions ? `${failures} 个` : "—"}</dd>
               </div>
             </dl>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-auto flex flex-wrap gap-2 pt-4">
               <Button onClick={() => navigate("/subscriptions")}>查看订阅</Button>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="md:col-span-5">
+        <Card className="flex flex-col md:col-span-7">
           <CardHeader>
             <CardTitle>运行面板</CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="text-[13px] text-ink-2">
-              节点选择、延迟测试、连接与流量，由上游 metacubexd 提供，在新标签页打开。
-            </p>
-            <div className="mt-4">
-              <Button variant="primary" asChild>
-                <a href="/ui/" target="_blank" rel="noreferrer">
-                  打开运行面板
-                  <ExternalLink />
-                </a>
-              </Button>
+          <CardContent className="flex flex-1 flex-col">
+            <div className="divide-y divide-line-soft">
+              <div className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0">
+                  <b className="text-[13.5px] font-medium">Metacubexd</b>
+                  <p className="text-xs text-ink-3">节点选择、延迟测试、连接与流量</p>
+                </div>
+                <Button size="sm" className="ml-auto" asChild>
+                  <a href="/ui/" target="_blank" rel="noreferrer">
+                    打开
+                    <ExternalLink />
+                  </a>
+                </Button>
+              </div>
+              <div className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0">
+                  <b className="text-[13.5px] font-medium">Zashboard</b>
+                  <p className="text-xs text-ink-3">节点卡片、连接表格与规则查询</p>
+                </div>
+                <Button size="sm" className="ml-auto" asChild>
+                  <a href={zashboardUrl()} target="_blank" rel="noreferrer">
+                    打开
+                    <ExternalLink />
+                  </a>
+                </Button>
+              </div>
             </div>
+            <p className="mt-auto pt-3 text-xs text-ink-3">
+              两者都是上游运行面板，在新标签页打开；已预置本面板的 /api 反代，无需填端点。
+            </p>
           </CardContent>
         </Card>
       </div>

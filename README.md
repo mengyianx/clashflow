@@ -22,7 +22,7 @@ docker run -d --name clashflow --restart unless-stopped \
 1. 打开 `http://<网关IP>:8080`，用 `CLASHFLOW_PASSWORD` 登录。
 2. **Configs** 页：默认已有一个 `default` 配置（`mixed-port: 7890`、`allow-lan: true`）。可新建（空配置 / 空白模板）、复制为手编配置、编辑保存——保存 = 内核校验 + 原子替换 + 热载，坏配置被拒且内核错误**原样回显**、旧文件不动。
 3. **Subscriptions** 页：粘贴订阅 URL 导入（内容必须是完整的 mihomo YAML）；手动 Refresh、设置自定义 UA 与更新间隔；到期自动刷新，失败保留旧配置并标红原因，下一轮自动重试。
-4. Overview 打开 **Runtime Dashboard**（`/ui/`）：节点选择、延迟测试、连接、流量、日志，免手填端点直连面板反代。
+4. Overview 打开 **Runtime Dashboard**：`/ui/` 是 metacubexd，`/zui/` 是 zashboard，两者都免手填端点直连面板反代。
 5. LAN 设备把代理指向 `http://<网关IP>:7890`（mixed 端口，HTTP/HTTPS/SOCKS 同口，免认证）。
 
 ## 端口
@@ -42,7 +42,7 @@ docker run -d --name clashflow --restart unless-stopped \
 | `CLASHFLOW_SCHEDULER_TICK_SECONDS` | 否 | `60` | 订阅调度器巡检间隔（秒） |
 | `CLASHFLOW_RESPAWN_BASE_DELAY` | 否 | `1.0` | 内核崩溃自动拉起的指数退避基数（秒） |
 | `CLASHFLOW_MAX_RESPAWNS` | 否 | `5` | 连续崩溃拉起次数上限；超限转 `degraded`（面板红字），手动 Start 恢复 |
-| `CLASHFLOW_DATA_DIR` / `CLASHFLOW_WEB_DIST` / `CLASHFLOW_UI_DIST` | 否 | 镜像内置路径 | 数据卷与前端/运行面板产物位置，一般无需修改 |
+| `CLASHFLOW_DATA_DIR` / `CLASHFLOW_WEB_DIST` / `CLASHFLOW_UI_DIST` / `CLASHFLOW_ZUI_DIST` | 否 | 镜像内置路径 | 数据卷、面板前端、两套运行面板产物位置，一般无需修改 |
 
 ## 数据卷 `/data`
 
@@ -57,7 +57,7 @@ docker run -d --name clashflow --restart unless-stopped \
 - **配置管理**：多配置并存（每订阅一份派生配置 + 任意手编配置，全局唯一名）。保存 = `mihomo -t` 校验 → 原子替换 →（Active 时）热载，不重启内核；切换 Active 走同一校验+热载管线，成功才记录。订阅派生配置可手改，但编辑器会警示“下次刷新将覆盖”，并提供一键“复制为手编配置”。
 - **订阅管理**：URL 导入恰生成一份订阅派生配置，刷新只重写它自己；手动 / 定时刷新（全局默认 24h，每订阅可覆盖间隔与 UA）；失败保留旧配置、标红原因（网络/非法 YAML/校验错误分类可见），下一轮自动重试，成功即清除。
 - **服务控制**：启动 / 停止 / 重启，状态一目了然（`up` / `respawning` / `down` / `degraded`）；内核意外退出按指数退避自动拉起（始终以当前 Active Config）；GEO 自动更新由内核内置调度负责（默认模板与空白模板均已开启）。
-- **运行面板**：内嵌 metacubexd（`/ui/`，即上游 metacubexd dashboard），开箱连接，其 Profile 管理面（上游 metacubexd 功能）在静态模式下自动隐藏。
+- **运行面板**：两套上游运行面板并存——metacubexd 在 `/ui/`（静态模式下自动隐藏其 Profile 管理面），zashboard 在 `/zui/`（首次打开自动指向本面板的 `/api` 反代，并隐藏内核升级与 TUN 开关）。两者都在新标签页打开，节点选择 / 延迟测试 / 连接 / 流量 / 日志各取所需。
 - **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；概览 / 配置 / 订阅 / 运行面板四屏，YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
 - **安全面**：面板密码 + 服务端会话 cookie（HttpOnly，登出即吊销）；API secret 只在服务端注入反代；Controller 仅回环监听。
 
@@ -74,7 +74,7 @@ curl -s http://127.0.0.1:8080/healthz        # {"status": "ok"}
 # M3 订阅：POST /api/panel/subscriptions（导入）· POST /api/panel/subscriptions/{name}/refresh
 #         失败标红并保留旧配置；间隔覆盖 + CLASHFLOW_SCHEDULER_TICK_SECONDS 可见自动触发
 
-# M4 运行面板：浏览器打开 /ui/，切节点 / 延迟测试 / 连接 / 流量 / 日志全走 /api/* 反代（无直连 9090）
+# M4 运行面板：浏览器打开 /ui/ 与 /zui/，切节点 / 延迟测试 / 连接 / 流量 / 日志全走 /api/* 反代（无直连 9090）
 
 # M5 鉴权与交付：未登录访问任意面板路由 / API / WebSocket 被拒；多架构镜像见下
 ```
@@ -95,4 +95,4 @@ CI（`.github/workflows/ci.yml`）在每次 push 上运行 lint / type-check / �
 - 配置内容原样归属用户 / 供应商（`docs/adr/0001-config-ownership-verbatim-yaml.md`）：面板从不改写既有 YAML，没有覆写 / 合并层。订阅内容按 ADR-0001 原样使用——供应商 YAML 里没有 `geo-auto-update` 时 GEO 自动更新不会由面板补写，需要请在订阅内容里自行加上该键。
 - `mihomo -t` 校验有联网副作用：配置引用的 GEO 缺失时会尝试下载，下载失败判校验失败。
 - 会话保存在面板进程内存：重启面板后需重新登录。
-- 管理面板是中文单语，不做语言切换；运行面板是上游 metacubexd 的界面，自带 en / zh / ru / ja / ko / fr / fa 七种语言并跟随浏览器语言，面板不改写它。内核自己写出的报错（`mihomo -t` 输出、Controller 拒绝原文）永远是英文，按原样呈现。
+- 管理面板是中文单语，不做语言切换；两套运行面板都是上游界面（metacubexd 自带 en / zh / ru / ja / ko / fr / fa 并跟随浏览器语言，zashboard 自带 zh / en），面板不改写它们。内核自己写出的报错（`mihomo -t` 输出、Controller 拒绝原文）永远是英文，按原样呈现。

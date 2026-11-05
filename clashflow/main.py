@@ -22,6 +22,7 @@ from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
 from clashflow.scheduler import SubscriptionScheduler
 from clashflow.ui import router as ui_router
+from clashflow.zui import router as zui_router
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ def create_app(
     kernel_bin: str | None = None,
     web_dist: Path | None = None,
     ui_dist: Path | None = None,
+    zui_dist: Path | None = None,
     boot_timeout: float = 10.0,
     password: str | None = None,
 ) -> FastAPI:
@@ -99,6 +101,11 @@ def create_app(
     if ui_dist is None:
         env_ui = os.environ.get("CLASHFLOW_UI_DIST")
         ui_dist = Path(env_ui) if env_ui else Path(__file__).resolve().parent.parent / "metacubexd"
+    if zui_dist is None:
+        env_zui = os.environ.get("CLASHFLOW_ZUI_DIST")
+        zui_dist = (
+            Path(env_zui) if env_zui else Path(__file__).resolve().parent.parent / "zashboard"
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -121,6 +128,7 @@ def create_app(
         # Shared upstream client for the /api reverse proxy (clashflow.apiproxy).
         api_client = httpx.AsyncClient(trust_env=False, timeout=httpx.Timeout(30.0))
         app.state.api_client = api_client
+        app.state.zui_dist = zui_dist
 
         manager = KernelManager(resolved_kernel, resolved_data)
         app.state.kernel = manager
@@ -170,10 +178,14 @@ def create_app(
     # Panel routers stay above the /api reverse proxy: an explicit panel route
     # always shadows the proxy (see clashflow/apiproxy.py routing convention).
     app.include_router(ui_router)
+    app.include_router(zui_router)
     app.include_router(apiproxy_router)
     # Runtime Dashboard (metacubexd static bundle); /ui/config.js is served by
     # clashflow.ui.router, which shadows this mount's upstream copy.
     app.mount("/ui", StaticFiles(directory=str(ui_dist), html=True, check_dir=False), name="ui")
+    # Second Runtime Dashboard (zashboard); /zui/ itself is served by
+    # clashflow.zui.router (bootstrap injection), which shadows this mount.
+    app.mount("/zui", StaticFiles(directory=str(zui_dist), html=True, check_dir=False), name="zui")
     app.mount("/", StaticFiles(directory=web_dist, html=True, check_dir=False), name="web")
     return app
 

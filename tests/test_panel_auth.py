@@ -69,6 +69,13 @@ async def test_unauthenticated_access_to_every_panel_surface_is_rejected(boot_ap
             assert entry.status_code == 307
             assert (await anon.get("/ui/config.js")).status_code == 401
 
+            # The second Runtime Dashboard (/zui) is locked the same way.
+            zui = await anon.get("/zui/", headers=BROWSER_HEADERS)
+            assert zui.status_code == 307
+            assert zui.headers["location"] == "/"
+            assert (await anon.get("/zui", headers=BROWSER_HEADERS)).status_code == 307
+            assert (await anon.get("/zui/manifest.webmanifest")).status_code == 401
+
         # The rejected write changed nothing.
         configs = await panel.client.get("/api/panel/configs")
         assert [entry["name"] for entry in configs.json()] == ["default"]

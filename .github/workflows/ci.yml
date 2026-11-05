@@ -35,6 +35,7 @@ jobs:
         run: |
           bash scripts/fetch-kernel.sh
           bash scripts/fetch-ui.sh
+          bash scripts/fetch-zui.sh
 
       - name: Lint
         run: |

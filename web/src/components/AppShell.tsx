@@ -3,9 +3,16 @@ import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { BrandMark } from "@/components/BrandMark";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { zashboardUrl } from "@/lib/dashboards";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import type { Theme } from "@/hooks/useTheme";
@@ -77,6 +84,7 @@ export function AppShell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme
               {label}
             </NavLink>
           ))}
+          <div className="mt-3 px-3 pb-1 text-[11px] text-ink-3">运行面板</div>
           <a
             href="/ui/"
             target="_blank"
@@ -84,7 +92,16 @@ export function AppShell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme
             className="flex items-center gap-2.5 rounded-[var(--radius-control)] px-3 py-2 text-sm text-ink-2 hover:bg-hover hover:text-ink"
           >
             <ExternalLink className="size-4" />
-            运行面板
+            Metacubexd
+          </a>
+          <a
+            href={zashboardUrl()}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2.5 rounded-[var(--radius-control)] px-3 py-2 text-sm text-ink-2 hover:bg-hover hover:text-ink"
+          >
+            <ExternalLink className="size-4" />
+            Zashboard
           </a>
         </nav>
         <div className="mt-auto flex gap-1.5 px-1 pt-1.5">
@@ -136,15 +153,30 @@ export function AppShell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme
               {label}
             </NavLink>
           ))}
-          <a
-            href="/ui/"
-            target="_blank"
-            rel="noreferrer"
-            className="flex flex-1 flex-col items-center gap-1 rounded-[var(--radius-control)] py-1.5 text-[11px] text-ink-3"
-          >
-            <ExternalLink className="size-4" />
-            运行面板
-          </a>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="运行面板"
+                className="flex flex-1 flex-col items-center gap-1 rounded-[var(--radius-control)] py-1.5 text-[11px] text-ink-3"
+              >
+                <ExternalLink className="size-4" />
+                运行面板
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" side="top" className="mb-1">
+              <DropdownMenuItem asChild>
+                <a href="/ui/" target="_blank" rel="noreferrer">
+                  Metacubexd
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a href={zashboardUrl()} target="_blank" rel="noreferrer">
+                  Zashboard
+                </a>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </nav>
       </main>
     </div>

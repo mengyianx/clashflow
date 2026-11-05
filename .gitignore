@@ -46,8 +46,9 @@ desktop.ini
 # Node / web frontend
 node_modules/
 
-# Embedded Runtime Dashboard bundle (scripts/fetch-ui.sh)
+# Embedded Runtime Dashboard bundles (scripts/fetch-ui.sh, scripts/fetch-zui.sh)
 metacubexd/
+zashboard/
 
 # Logs
 *.log
