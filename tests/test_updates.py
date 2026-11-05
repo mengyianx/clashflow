@@ -10,6 +10,7 @@ stay offline and deterministic; the Kernel is either the real binary (API-level
 dashboard tests) or a stub (restart/rollback semantics).
 """
 
+import asyncio
 import gzip
 import hashlib
 import io
@@ -24,7 +25,7 @@ from typing import Self
 import pytest
 from conftest import BootApp
 
-from clashflow.updates import UpdateError, UpdateManager
+from clashflow.updates import Release, UpdateError, UpdateManager
 
 
 def ui_bundle(marker: str) -> bytes:
@@ -426,3 +427,37 @@ async def test_rollback_without_a_previous_version_reports_a_failure(
         failed = await panel.client.post("/api/panel/updates/zashboard/rollback")
         assert failed.status_code == 502
         assert "no previous version" in failed.json()["detail"]
+
+
+async def test_checking_for_releases_does_not_block_an_update(
+    tmp_path: Path, fake_github: FakeGitHub
+) -> None:
+    old = tmp_path / "old-mihomo"
+    old.write_text("#!/bin/sh\nexit 0\n")
+    kernel = StubKernel(old)
+    manager = kernel_manager(tmp_path, kernel, fake_github.url)
+    fake_github.publish(
+        "MetaCubeX/mihomo", "v9.9.9", "mihomo-linux-amd64-v9.9.9.gz", kernel_archive("v9.9.9")
+    )
+
+    in_check = asyncio.Event()
+    proceed = asyncio.Event()
+    calls = 0
+    original = manager.latest_release
+
+    async def paused(component: str) -> Release:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            in_check.set()
+            await proceed.wait()
+        return await original(component)
+
+    manager.latest_release = paused  # type: ignore[method-assign]
+    checking = asyncio.create_task(manager.check())
+    await in_check.wait()
+    rows = await manager.update("kernel")
+    assert state_of(rows, "kernel")["current"] == "v9.9.9"
+    proceed.set()
+    await checking
+    await manager.aclose()

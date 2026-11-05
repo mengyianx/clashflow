@@ -153,6 +153,9 @@ class UpdateManager:
         self._proxy = github_proxy
         self._root = data_dir / "runtime"
         self._locks = {component: asyncio.Lock() for component in COMPONENTS}
+        # Checks queue behind each other only: a check in flight must not read as
+        # "an update is already running" for someone pressing update.
+        self._check_lock = asyncio.Lock()
         # Secrets/URLs a test may inject; unset means a fresh client per call.
         self._client: httpx.AsyncClient | None = None
 
@@ -275,7 +278,7 @@ class UpdateManager:
         return Release(version=payload["tag_name"], assets=assets, digests=digests)
 
     async def check(self) -> list[dict[str, Any]]:
-        async with self._locks[KERNEL]:  # any lock serialises checks
+        async with self._check_lock:
             for component in COMPONENTS:
                 state = _read_state(self._store, component)
                 try:
