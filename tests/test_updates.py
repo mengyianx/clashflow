@@ -7,7 +7,7 @@ binary never answers.
 
 GitHub is replaced by a local HTTP server (releases JSON + assets) so the tests
 stay offline and deterministic; the Kernel is either the real binary (API-level
-dashboard tests) or a stub (restart/rollback semantics).
+Runtime Dashboard tests) or a stub (restart/rollback semantics).
 """
 
 import asyncio
@@ -29,7 +29,7 @@ from clashflow.updates import Release, UpdateBusy, UpdateError, UpdateManager
 
 
 def ui_bundle(marker: str) -> bytes:
-    """A minimal valid dashboard archive: index.html + the script it references."""
+    """A minimal valid Runtime Dashboard archive: index.html + the script it references."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as bundle:
         bundle.writestr(

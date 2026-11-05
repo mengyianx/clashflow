@@ -444,9 +444,9 @@ async def test_node_selections_survive_switch_for_shared_groups_and_drop_for_mis
     boot_app,
 ) -> None:
     async with boot_app(config_body=GROUPED_CONFIG) as panel:
-        # Pick n2 in both proxy groups through the panel seam (the Runtime
-        # Dashboard path); the Kernel persists selections in /data/cache.db
-        # keyed by proxy-group name (profile.store-selected).
+        # Pick n2 in both proxy groups through the panel seam (the
+        # Runtime Dashboard path); the Kernel persists selections in
+        # /data/cache.db keyed by proxy-group name (profile.store-selected).
         for group in ("shared", "only-a"):
             resp = await panel.client.put(f"/api/proxies/{group}", json={"name": "n2"})
             assert resp.status_code == 204

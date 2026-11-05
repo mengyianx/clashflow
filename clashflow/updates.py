@@ -11,7 +11,7 @@ versions the user installed):
 
     /data/runtime/kernel/<version>/mihomo        installed Kernel binaries
     /data/runtime/kernel/current -> <version>    pointer the process manager runs
-    /data/runtime/webui/<component>/<version>/   extracted dashboard bundles
+    /data/runtime/webui/<component>/<version>/   extracted Runtime Dashboard bundles
     /data/runtime/webui/<component>/current      pointer each static mount serves
 
 Every pointer is a symlink replaced with `os.replace` (atomic, no window where

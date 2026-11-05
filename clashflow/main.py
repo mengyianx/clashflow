@@ -117,7 +117,7 @@ def create_app(
     runtime_root = resolved_data / "runtime"
 
     def resolve_ui(name: str) -> Path:
-        """A dashboard update installs under /data and wins over the image."""
+        """A Runtime Dashboard update installs under /data and wins over the image."""
         pointer = runtime_root / "webui" / name / "current"
         if (pointer / "index.html").is_file():
             return pointer
