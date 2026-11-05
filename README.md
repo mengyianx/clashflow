@@ -4,7 +4,7 @@
 
 ## 快速开始（从零到可用）
 
-GHCR 上的镜像包继承仓库的可见性：仓库为私有时镜像同样是私有的，拉取前先登录（PAT 需带 `read:packages` 权限）。
+GHCR 上的镜像包继承仓库的可见性：仓库为私有时镜像同样是私有的，拉取前先登录（PAT 需带 `read:packages` 权限）。镜像 tag `:latest` 指向最近一次手动发布的版本，不是 `flow` 分支的当前提交（见「CI：质量门、镜像与发版」）。
 
 ```bash
 printf '%s' "$GHCR_PAT" | docker login ghcr.io -u <GitHub 用户名> --password-stdin
@@ -20,9 +20,9 @@ docker run -d --name clashflow --restart unless-stopped \
 ```
 
 1. 打开 `http://<网关IP>:8080`，用 `CLASHFLOW_PASSWORD` 登录。
-2. **Configs** 页：默认已有一个 `default` 配置（`mixed-port: 7890`、`allow-lan: true`）。可新建（空配置 / 空白模板）、复制为手编配置、编辑保存——保存 = 内核校验 + 原子替换 + 热载，坏配置被拒且内核错误**原样回显**、旧文件不动。
-3. **Subscriptions** 页：粘贴订阅 URL 导入（内容必须是完整的 mihomo YAML）；手动 Refresh、设置自定义 UA 与更新间隔；到期自动刷新，失败保留旧配置并标红原因，下一轮自动重试。
-4. Overview 打开 **Runtime Dashboard**：`/ui/` 是 metacubexd，`/zui/` 是 zashboard，两者都免手填端点直连面板反代。
+2. **配置** 页：默认已有一个 `default` 配置（`mixed-port: 7890`、`allow-lan: true`）。可新建（空配置 / 空白模板）、复制为手写配置、编辑保存——保存 = 内核校验 + 原子替换 + 热载，坏配置被拒且内核错误**原样回显**、旧文件不动。
+3. **订阅** 页：粘贴订阅 URL 导入（内容必须是完整的 mihomo YAML）；手动刷新、设置自定义 UA 与更新间隔；到期自动刷新，失败保留旧配置并标红原因，下一轮自动重试。
+4. **概览** 页打开 **Runtime Dashboard**：`/ui/` 是 metacubexd，`/zui/` 是 zashboard，两者都免手填端点直连面板反代。
 5. LAN 设备把代理指向 `http://<网关IP>:7890`（mixed 端口，HTTP/HTTPS/SOCKS 同口，免认证）。
 
 ## 端口
@@ -43,8 +43,9 @@ docker run -d --name clashflow --restart unless-stopped \
 | `CLASHFLOW_RESPAWN_BASE_DELAY` | 否 | `1.0` | 内核崩溃自动拉起的指数退避基数（秒） |
 | `CLASHFLOW_MAX_RESPAWNS` | 否 | `5` | 连续崩溃拉起次数上限；超限转 `degraded`（面板红字），手动 Start 恢复 |
 | `CLASHFLOW_DATA_DIR` / `CLASHFLOW_WEB_DIST` / `CLASHFLOW_UI_DIST` / `CLASHFLOW_ZUI_DIST` | 否 | 镜像内置路径 | 数据卷、面板前端、两套运行面板产物位置，一般无需修改 |
+| `CLASHFLOW_KERNEL` | 否 | `mihomo` | 内核可执行文件名或路径（默认名 `mihomo`，镜像内位于 `/usr/local/bin/mihomo`）；只决定镜像基线，运行时更新装到 `/data/runtime/` 后优先于它。一般无需修改 |
 | `CLASHFLOW_GITHUB_API` / `CLASHFLOW_GITHUB_PROXY` | 否 | `https://api.github.com` / 空 | 检查更新的 API 地址与下载/API 统一前缀（GitHub 不稳定时用） |
-| `CLASHFLOW_VERSIONS_FILE` | 否 | 镜像内 `/app/webui-versions.json` | 镜像基线版本清单，只有自建镜像才需要改 |
+| `CLASHFLOW_VERSIONS_FILE` | 否 | `webui-versions.json`（镜像内 `/app/webui-versions.json`） | 镜像基线版本清单，只有自建镜像才需要改 |
 
 ## 数据卷 `/data`
 
@@ -56,11 +57,11 @@ docker run -d --name clashflow --restart unless-stopped \
 
 ## 功能面
 
-- **配置管理**：多配置并存（每订阅一份派生配置 + 任意手编配置，全局唯一名）。保存 = `mihomo -t` 校验 → 原子替换 →（Active 时）热载，不重启内核；切换 Active 走同一校验+热载管线，成功才记录。订阅派生配置可手改，但编辑器会警示“下次刷新将覆盖”，并提供一键“复制为手编配置”。
+- **配置管理**：多配置并存（每订阅一份派生配置 + 任意手写配置，全局唯一名）。保存 = `mihomo -t` 校验 → 原子替换 →（Active 时）热载，不重启内核；切换 Active 走同一校验+热载管线，成功才记录。订阅派生配置可手改，但编辑器会警示“下次刷新将覆盖”，并提供一键“复制为手写配置”。
 - **订阅管理**：URL 导入恰生成一份订阅派生配置，刷新只重写它自己；手动 / 定时刷新（全局默认 24h，每订阅可覆盖间隔与 UA）；失败保留旧配置、标红原因（网络/非法 YAML/校验错误分类可见），下一轮自动重试，成功即清除。
 - **服务控制**：启动 / 停止 / 重启，状态一目了然（`up` / `respawning` / `down` / `degraded`）；内核意外退出按指数退避自动拉起（始终以当前 Active Config）；GEO 自动更新由内核内置调度负责（默认模板与空白模板均已开启）。
 - **运行面板**：两套上游运行面板并存——metacubexd 在 `/ui/`（静态模式下自动隐藏其 Profile 管理面），zashboard 在 `/zui/`（首次打开自动指向本面板的 `/api` 反代，并隐藏内核升级与 TUN 开关）。两者都在新标签页打开，节点选择 / 延迟测试 / 连接 / 流量 / 日志各取所需。
-- **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；概览 / 配置 / 订阅 / 运行面板四屏，YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
+- **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；概览 / 配置 / 订阅 / 编辑器 / 系统五屏 + 两套运行面板（Runtime Dashboard）入口：`/ui/` metacubexd、`/zui/` zashboard。YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
 - **系统与更新**：系统页手动检查 GitHub 最新发布，一键更新内核 / metacubexd / zashboard；更新包装在 `/data/runtime/`，容器重建后保留，每个组件可回滚到上一版。内核更新会自动重启内核，新二进制没起来则回滚旧版。详见 `docs/adr/0003-runtime-updates.md`。
 - **安全面**：面板密码 + 服务端会话 cookie（HttpOnly，登出即吊销）；API secret 只在服务端注入反代；Controller 仅回环监听。
 
@@ -113,7 +114,7 @@ bash scripts/fetch-zui.sh             # zashboard 静态包（/zui/）
 gh workflow run image.yml --ref flow -f version=v1.1.0
 ```
 
-发版前先确认该 ref 的 `Checks` 为绿。产物：`ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`，多架构 `linux/amd64`、`linux/arm64`、`linux/arm/v7`，并生成同名 GitHub Release。前端与两套面板的产物在 runner 本机构建（`FROM --platform=$BUILDPLATFORM`），只有内核阶段走 QEMU。
+发版前先确认该 ref 的 `Checks` 为绿。产物：`ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`，多架构 `linux/amd64`、`linux/arm64`、`linux/arm/v7`，并生成同名 GitHub Release。`latest` 指向**最近一次手动发布的版本**（只有手动发版才更新它），不是 `flow` 分支的当前提交——`flow` 上有更新而未发版时，`latest` 仍是上一个发布版。前端与两套面板的产物在 runner 本机构建（`FROM --platform=$BUILDPLATFORM`），只有内核阶段走 QEMU。
 
 ## 限制与折衷（v1 明确取舍）
 

@@ -7,12 +7,14 @@
 **v1 做**：
 
 - **订阅管理**：多订阅并存；手动刷新 + 自动更新（全局默认 24h，每订阅可覆盖）；刷新失败保留旧 Config、订阅状态标红并注明原因，下轮调度重试。只接受完整 mihomo YAML 订阅（不做 subconverter、不做 Age 解密、不做节点过滤）。
-- **配置管理**：多配置并存（每订阅一份 Config，刷新只重写自己那份、内容原样保留；手编配置独立，永不被刷新触碰）；纯 YAML 编辑器（保存 = 校验 + 热载，错误原样回显）；订阅派生配置允许手改但警示"下次刷新将覆盖"、提供"复制为手编配置"；新建 = 空白模板（`mixed-port: 7890`、`allow-lan: true` 骨架）或复制现有；任一时刻一份 Active Config。
-- **服务控制**：启动/停止/重启内核；保存/切换配置先 `mihomo -t` 校验再热载；崩溃自动拉起；GEO 自动更新。内核版本跟随镜像，不做容器内自升级。
+- **配置管理**：多配置并存（每订阅一份 Config，刷新只重写自己那份、内容原样保留；手写配置独立，永不被刷新触碰）；纯 YAML 编辑器（保存 = 校验 + 热载，错误原样回显）；订阅派生配置允许手改但警示"下次刷新将覆盖"、提供"复制为手写配置"；新建 = 空白模板（`mixed-port: 7890`、`allow-lan: true` 骨架）或复制现有；任一时刻一份 Active Config。
+- **服务控制**：启动/停止/重启内核；保存/切换配置先 `mihomo -t` 校验再热载；崩溃自动拉起；GEO 自动更新。内核版本默认取镜像基线（Image Baseline）；容器内换版本走运行时更新（Runtime Update，见 ADR-0003）。
 - **运行面板**：内嵌 metacubexd 静态站（节点选择、延迟测试、连接、流量、日志全部由它提供）。
 - **安全**：面板密码 + session cookie；controller 仅本机 + 后端反代；代理端口 LAN 免认证；面板纯 HTTP——LAN 明文传输是家用场景的明确折衷（密码/cookie 可被同网嗅探；被否决的直连方案暴露的是长期全权 secret，风险性质不同，见 ADR-0002）。
 
-**v1 不做**（明确拒绝）：覆写/合并层 · subconverter · 多用户 · TUN/透明网关 · 监控历史/告警/通知 · OpenClash 式调试诊断报告 · 容器内内核升级。
+**v1 不做**（明确拒绝）：覆写/合并层 · subconverter · 多用户 · TUN/透明网关 · 监控历史/告警/通知 · OpenClash 式调试诊断报告。
+
+内核与运行面板的版本默认取镜像基线（Image Baseline），不随镜像锁死；容器内换版本按 [ADR-0003](adr/0003-runtime-updates.md) 走运行时更新（Runtime Update）——面板「系统」页手动安装，不做自动升级。
 
 ## 2. 运行形态与契约
 
@@ -30,7 +32,7 @@ container (tini 为 PID 1)
 | `CLASHFLOW_PASSWORD` | 面板密码（必填环境变量） |
 | `CLASHFLOW_SECRET` | 可选，覆盖 controller secret；缺省随机生成一次并持久化到 `/data` |
 
-要点（事实支撑，见调研）：`-ext-ctl`/`-secret` 优先级高于 YAML 且 SIGHUP 后仍生效——controller 配置对订阅刷新/手编 YAML 免疫；内核自重启 API（`POST /restart`/`/upgrade`）**不使用**（它按进程原始 `-f` 重启，与 Active Config 可能不一致），重启一律由 ClashFlow 拉起。
+要点（事实支撑，见调研）：`-ext-ctl`/`-secret` 优先级高于 YAML 且 SIGHUP 后仍生效——controller 配置对订阅刷新/手写 YAML 免疫；内核自重启 API（`POST /restart`/`/upgrade`）**不使用**（它按进程原始 `-f` 重启，与 Active Config 可能不一致），重启一律由 ClashFlow 拉起。
 
 ## 3. 数据布局（单卷 `/data`，即 mihomo home dir）
 
@@ -39,7 +41,7 @@ container (tini 为 PID 1)
 ├── clashflow.db          # 元数据：订阅(URL/间隔/上次更新/错误状态)、active 记录、secret
 ├── configs/
 │   ├── <订阅名>.yaml      # 订阅派生 Config（刷新原样重写）
-│   └── <手编名>.yaml      # Hand-written Config
+│   └── <手写名>.yaml      # Hand-written Config
 ├── cache.db              # mihomo：节点选择等（profile.store-selected）
 ├── geoip.metadb / GeoSite.dat / ASN.mmdb
 └── providers/            # provider/ruleset 缓存
