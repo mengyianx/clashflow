@@ -10,9 +10,10 @@ a page with no hash, probes the page origin (`http://host:8080/`) — not the
 `/api` reverse proxy, so the probe fails. The entry document is therefore served
 with one injected bootstrap script: on a hash-less load it forwards to
 `#/setup` with the panel proxy as the backend (`secondaryPath=/api`) and hides
-the two upstream switches v1 rejects by policy — core upgrade (the Kernel
-version is pinned to the image) and TUN (not part of v1). The Kernel secret is
-never involved: `/api` injects it server-side (#14).
+the two upstream switches v1 rejects by policy — core upgrade (the Management
+Panel refuses the Kernel's own upgrade endpoint, so the upstream switch has
+nothing to call) and TUN (not part of v1). The Kernel secret is never involved:
+`/api` injects it server-side (#14).
 """
 
 import logging
@@ -55,7 +56,7 @@ async def zashboard_index(request: Request) -> HTMLResponse:
     """The bundle's entry document with the endpoint bootstrap injected.
 
     Served by the panel rather than the static mount so a direct visit (a
-    bookmark, no hash) still lands on a connected dashboard.
+    bookmark, no hash) still lands on a connected Runtime Dashboard.
     """
     dist = request.app.state.resolve_ui("zashboard")
     index = dist / "index.html"
