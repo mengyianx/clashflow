@@ -121,7 +121,11 @@ class AuthMiddleware:
             await send({"type": "websocket.close", "code": WS_UNAUTHORIZED_CODE})
             return
         accept = dict(scope.get("headers", [])).get(b"accept", b"")
-        if scope["path"].startswith(("/ui", "/zui")) and scope["method"] == "GET" and b"text/html" in accept:
+        if (
+            scope["path"].startswith(("/ui", "/zui"))
+            and scope["method"] == "GET"
+            and b"text/html" in accept
+        ):
             response: Response = RedirectResponse("/", status_code=307)
         else:
             response = JSONResponse({"detail": "not authenticated"}, status_code=401)

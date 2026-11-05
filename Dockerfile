@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # --- Frontend shell (React + TS + Vite) ---
-FROM node:22-alpine AS web
+# Built on the BUILD platform: the bundle is JavaScript/CSS, identical for every
+# target arch, and Tailwind's lightningcss ships no linux-armv7-musl prebuild —
+# building it per-target breaks the arm/v7 image for no gain.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
@@ -29,7 +32,7 @@ RUN apk add --no-cache curl \
  && /tmp/mihomo -v
 
 # --- Runtime Dashboard (metacubexd), pinned static release bundle ---
-FROM alpine:3.22 AS ui
+FROM --platform=$BUILDPLATFORM alpine:3.22 AS ui
 ARG METACUBEXD_VERSION=v1.273.1
 RUN apk add --no-cache curl \
  && curl -sSfL \
@@ -41,7 +44,7 @@ RUN apk add --no-cache curl \
  && tar -xzf /tmp/compressed-dist.tgz -C /dist
 
 # --- Second Runtime Dashboard (zashboard), pinned static release bundle ---
-FROM alpine:3.22 AS zui
+FROM --platform=$BUILDPLATFORM alpine:3.22 AS zui
 ARG ZASHBOARD_VERSION=v3.30.0
 # dist-no-fonts: the dashboard borrows the client's system fonts (the panel's
 # own CJK stack), keeping the image ~3 MB smaller than the bundled-font builds.

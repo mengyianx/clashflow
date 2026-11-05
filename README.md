@@ -79,13 +79,36 @@ curl -s http://127.0.0.1:8080/healthz        # {"status": "ok"}
 # M5 鉴权与交付：未登录访问任意面板路由 / API / WebSocket 被拒；多架构镜像见下
 ```
 
-## 构建镜像
+## 本地开发与测试
 
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t clashflow:local .
+python -m venv .venv && .venv/bin/pip install -e '.[dev]'
+bash scripts/fetch-kernel.sh          # 固定版本 mihomo（测试用真实内核）
+bash scripts/fetch-ui.sh              # metacubexd 静态包（/ui/）
+bash scripts/fetch-zui.sh             # zashboard 静态包（/zui/）
+(cd web && npm ci && npm run build)   # 面板前端产物（`/` 的 shell 断言依赖它）
+.venv/bin/python -m pytest -q
 ```
 
-CI（`.github/workflows/ci.yml`）在每次 push 上运行 lint / type-check / 测试，并用 buildx 构建推送多架构镜像到 GHCR（`ghcr.io/<owner>/<repo>`，分支与 commit SHA 标签；推送到集成分支 `flow` 时额外打 `latest` 标签，即快速开始引用的那个）。
+两条容易踩的坑：seam 测试绑定固定端口 9090 / 7890，跑测试前先停掉本机运行的面板或容器；`web/dist` 与三个下载包都是生成物（已 ignore），删掉后上面的准备步骤要重跑。
+
+## 镜像与发版（全部由 CI 完成）
+
+本地不构建镜像。`.github/workflows/ci.yml` 负责：
+
+| 触发 | 做什么 |
+|---|---|
+| PR | lint / 类型 / 测试（含前端构建与内核、两套面板产物），再对三种架构做一次**不推送**的镜像构建，用来验证 Dockerfile |
+| push `flow` | 同上并推送 `ghcr.io/<owner>/<repo>` 的 `flow`、`sha-<commit>`、`latest` 标签 |
+| push `v*` 标签 | 推送 `X.Y.Z` 与 `X.Y` 镜像标签，并自动开一个 GitHub Release |
+
+发版：
+
+```bash
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+镜像矩阵 `linux/amd64`、`linux/arm64`、`linux/arm/v7`；前端与两套面板的产物在 runner 本机构建（`FROM --platform=$BUILDPLATFORM`），只有内核阶段走 QEMU，`arm/v7` 仍是尽力而为。想在本地验证镜像时再 `docker build -t clashflow:local .`，不要用它代替 CI。
 
 ## 限制与折衷（v1 明确取舍）
 

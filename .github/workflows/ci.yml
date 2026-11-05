@@ -1,16 +1,30 @@
 name: CI
 
+# Images and releases are GitHub's job: nothing here builds locally.
+#   pull_request  -> lint / type-check / tests, then a multi-arch image BUILD
+#                    with no push (the Dockerfile is still validated)
+#   push flow     -> the same, plus publish of branch / sha / latest tags
+#   push v* tag   -> publish semver tags and open a GitHub Release
 on:
   push:
+    branches: [flow]
+    tags: ["v*"]
   pull_request:
 
 permissions:
   contents: read
 
+# A superseded PR run is wasted work; branch and tag runs are not cancellable
+# because they publish artifacts.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   quality:
     name: lint / type-check / tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -31,7 +45,7 @@ jobs:
       - name: Install
         run: pip install -e '.[dev]'
 
-      - name: Fetch pinned Kernel and Runtime Dashboard bundles
+      - name: Fetch pinned Kernel and dashboard bundles
         run: |
           bash scripts/fetch-kernel.sh
           bash scripts/fetch-ui.sh
@@ -51,9 +65,13 @@ jobs:
         run: pytest -q
 
   image:
-    name: multi-arch image
+    name: image ${{ github.event_name == 'push' && 'publish' || 'build' }}
     needs: quality
     runs-on: ubuntu-latest
+    # QEMU builds can stall instead of failing; the frontend stage now builds
+    # natively (Dockerfile pins $BUILDPLATFORM), and this bound keeps a future
+    # stall from eating a runner for GitHub's 6-hour default.
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -64,31 +82,58 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # README quick-start pins :latest; the `latest` tag is produced only on
-      # pushes to the integration branch `flow` (latest=auto would never fire
-      # — there are no tag/semver/match events here).
-      - uses: docker/metadata-action@v5
+      # Branch / sha on `flow`, semver on tags; `latest` only from `flow`, which
+      # is what README's quick start pins.
+      - name: Tags and labels
+        uses: docker/metadata-action@v5
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=ref,event=branch
             type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/flow' }}
 
-      # arm/v7 is best-effort (ticket #18): the image matrix is amd64 + arm64,
-      # plus arm/v7 while its dependency wheels keep resolving (PyYAML has no
-      # armv7l wheel — nothing imports it today; revisit if that changes).
-      - uses: docker/build-push-action@v7
+      # arm/v7 is best-effort: the frontend, metacubexd and zashboard stages
+      # build on the runner's own platform, so only the Kernel stage emulates.
+      - name: Build and push
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
-          push: true
+          # PRs validate the build; only pushes publish.
+          push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: github release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            Container image:
+
+            ```
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ```
+
+            Multi-arch: `linux/amd64`, `linux/arm64`, `linux/arm/v7`.
