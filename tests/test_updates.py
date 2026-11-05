@@ -25,7 +25,7 @@ from typing import Self
 import pytest
 from conftest import BootApp
 
-from clashflow.updates import Release, UpdateError, UpdateManager
+from clashflow.updates import Release, UpdateBusy, UpdateError, UpdateManager
 
 
 def ui_bundle(marker: str) -> bytes:
@@ -460,4 +460,35 @@ async def test_checking_for_releases_does_not_block_an_update(
     assert state_of(rows, "kernel")["current"] == "v9.9.9"
     proceed.set()
     await checking
+    await manager.aclose()
+
+
+async def test_a_second_update_of_the_same_component_is_refused_while_one_runs(
+    tmp_path: Path, fake_github: FakeGitHub
+) -> None:
+    old = tmp_path / "old-mihomo"
+    old.write_text("#!/bin/sh\nexit 0\n")
+    kernel = StubKernel(old)
+    manager = kernel_manager(tmp_path, kernel, fake_github.url)
+    fake_github.publish(
+        "MetaCubeX/mihomo", "v9.9.9", "mihomo-linux-amd64-v9.9.9.gz", kernel_archive("v9.9.9")
+    )
+
+    in_update = asyncio.Event()
+    proceed = asyncio.Event()
+    original = manager.latest_release
+
+    async def paused(component: str) -> Release:
+        in_update.set()
+        await proceed.wait()
+        return await original(component)
+
+    manager.latest_release = paused  # type: ignore[method-assign]
+    running = asyncio.create_task(manager.update("kernel"))
+    await in_update.wait()
+    with pytest.raises(UpdateBusy):
+        await manager.update("kernel")
+    proceed.set()
+    rows = await running
+    assert state_of(rows, "kernel")["current"] == "v9.9.9"
     await manager.aclose()
