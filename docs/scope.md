@@ -23,14 +23,14 @@
 ### 服务控制（Service Control）
 
 - 启动 / 停止 / 重启；内核意外退出按指数退避自动拉起（基数 `CLASHFLOW_RESPAWN_BASE_DELAY`，默认 1 s），连续 5 次失败转 `degraded` 并停止自动拉起，手动 Start 恢复。
-- 内核版本随镜像固定，不使用内核自带的 `/restart`、`/upgrade`（它们按进程原始 `-f` 重启，会与当前配置脱节）。
+- 内核版本默认取镜像基线（Image Baseline）；换版本只能走运行时更新（Runtime Update，见 ADR-0003）——面板「系统」页手动安装，不做自动升级。不使用内核自带的 `/restart`、`/upgrade`（它们按进程原始 `-f` 重启，会与当前配置脱节）。
 - GEO 自动更新由内核内置调度负责，且**只在配置里写了 `geo-auto-update` 时生效**——订阅内容没写，面板不会替你补。
 
 ### 运行面板（Runtime Dashboard）
 
-- 两套上游静态面板并存：metacubexd 在 `/ui/`，zashboard 在 `/zui/`；都从新标签页打开，版本随镜像 pin。
+- 两套上游静态面板并存：metacubexd 在 `/ui/`，zashboard 在 `/zui/`；都从新标签页打开；版本同样默认取镜像基线，换版本走运行时更新（Runtime Update，见 ADR-0003）。
 - 免填端点：metacubexd 由面板下发部署配置，zashboard 由入口页注入 `#/setup` 参数，两者都指向面板自己的 `/api` 反代。
-- Kernel secret 只在服务端注入反代；浏览器侧没有任何凭证，上游面板的"升级内核 / TUN"开关被隐藏。
+- Controller secret 只在服务端注入反代；浏览器侧没有任何凭证，上游面板的"升级内核 / TUN"开关被隐藏。
 
 ### 系统与更新
 
@@ -54,7 +54,7 @@
 ### 交付
 
 - 一条 `docker run` 得到可用代理；数据全在单卷 `/data`（配置、`clashflow.db`、内核 `cache.db`、GEO 与 provider 缓存），备份 = 拷整个卷。
-- 镜像由 GitHub Actions 构建：PR 只做三架构验证（不推送），发版是**手动** `workflow_dispatch` 输入版本号，产物 `ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`，多架构 `amd64 / arm64 / arm/v7`（arm/v7 尽力而为）。
+- 镜像由 GitHub Actions 构建：PR 只做三架构验证（不推送），发版是**手动** `workflow_dispatch` 输入版本号，产物 `ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`（`latest` = 最近一次手动发布的版本，不是 `flow` 的当前提交），多架构 `amd64 / arm64 / arm/v7`（arm/v7 尽力而为）。
 
 ## 2. 明确不做
 
@@ -79,7 +79,7 @@
 |---|---|
 | 端口 | `7890` 代理（mixed，LAN 免认证）、`8080` 面板（HTTP）、`9090` Controller（仅容器内回环） |
 | 必填环境变量 | `CLASHFLOW_PASSWORD` |
-| 可选环境变量 | `CLASHFLOW_SECRET`、`CLASHFLOW_SCHEDULER_TICK_SECONDS`（60）、`CLASHFLOW_RESPAWN_BASE_DELAY`（1.0）、`CLASHFLOW_MAX_RESPAWNS`（5）、`CLASHFLOW_DATA_DIR` / `_WEB_DIST` / `_UI_DIST` / `_ZUI_DIST`、`CLASHFLOW_BIND`（0.0.0.0）/ `CLASHFLOW_PORT`（8080）、`CLASHFLOW_GITHUB_API`（`https://api.github.com`）/ `CLASHFLOW_GITHUB_PROXY`（空） |
+| 可选环境变量 | `CLASHFLOW_SECRET`、`CLASHFLOW_SCHEDULER_TICK_SECONDS`（60）、`CLASHFLOW_RESPAWN_BASE_DELAY`（1.0）、`CLASHFLOW_MAX_RESPAWNS`（5）、`CLASHFLOW_DATA_DIR` / `_WEB_DIST` / `_UI_DIST` / `_ZUI_DIST`、`CLASHFLOW_BIND`（0.0.0.0）/ `CLASHFLOW_PORT`（8080）、`CLASHFLOW_KERNEL`（`mihomo`）、`CLASHFLOW_VERSIONS_FILE`（`webui-versions.json`）、`CLASHFLOW_GITHUB_API`（`https://api.github.com`）/ `CLASHFLOW_GITHUB_PROXY`（空） |
 | 配置名规则 | 非空、首尾无空白、不等于 `.` / `..`、不含 `/` `\` NUL |
 | 订阅抓取 | 超时 30 s、默认 UA `ClashFlow/0.1`、默认间隔 1440 min |
 | 会话 | 7 天，进程内存，登出即吊销 |
