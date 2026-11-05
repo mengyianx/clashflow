@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 _ADDITIVE_SUBSCRIPTION_COLUMNS = (
     "user_agent TEXT",
     "update_interval_minutes INTEGER",
+    # The failure class of the last failed refresh (ticket #27), written by
+    # the shared refresh dispatch in clashflow.refresh. NULL means "no class":
+    # a Subscription that never failed, one whose record predates the class,
+    # or a failure outside the refresh pipeline (a vanished Config
+    # registration). The raw error text lives in `last_error` beside it.
+    "last_error_class TEXT",
 )
 
 
@@ -218,17 +224,24 @@ class MetadataStore:
         self._conn.commit()
 
     def mark_subscription_refreshed(self, name: str) -> None:
-        """Record a successful refresh: stamp the time and clear the failure."""
+        """Record a successful refresh: stamp the time and clear the failure
+        (its class and its raw text alike)."""
         self._conn.execute(
-            "UPDATE subscriptions SET last_refresh_at = ?, last_error = NULL WHERE name = ?",
+            "UPDATE subscriptions SET last_refresh_at = ?, last_error = NULL,"
+            " last_error_class = NULL WHERE name = ?",
             (_utc_now(), name),
         )
         self._conn.commit()
 
-    def mark_subscription_failed(self, name: str, reason: str) -> None:
-        """Record a failed refresh; the reason stays until the next success,
-        while `last_refresh_at` keeps the last SUCCESSFUL refresh time."""
-        self._conn.execute("UPDATE subscriptions SET last_error = ? WHERE name = ?", (reason, name))
+    def mark_subscription_failed(self, name: str, reason: str, failure_class: str | None) -> None:
+        """Record a failed refresh; the reason and its class stay until the
+        next success, while `last_refresh_at` keeps the last SUCCESSFUL
+        refresh time. `failure_class` is None for a failure outside the
+        refresh pipeline: the raw text is kept, no class is claimed."""
+        self._conn.execute(
+            "UPDATE subscriptions SET last_error = ?, last_error_class = ? WHERE name = ?",
+            (reason, failure_class, name),
+        )
         self._conn.commit()
 
     def close(self) -> None:
@@ -236,8 +249,8 @@ class MetadataStore:
 
 
 _SELECT_SUBSCRIPTION = (
-    "SELECT name, url, last_refresh_at, last_error, user_agent, update_interval_minutes"
-    " FROM subscriptions"
+    "SELECT name, url, last_refresh_at, last_error, user_agent, update_interval_minutes,"
+    " last_error_class FROM subscriptions"
 )
 
 
@@ -251,9 +264,17 @@ def _utc_now() -> str:
 
 
 def _subscription_entry(
-    row: tuple[str, str, str | None, str | None, str | None, int | None],
+    row: tuple[str, str, str | None, str | None, str | None, int | None, str | None],
 ) -> dict[str, str | int | None]:
-    name, url, last_refresh_at, last_error, user_agent, update_interval_minutes = row
+    (
+        name,
+        url,
+        last_refresh_at,
+        last_error,
+        user_agent,
+        update_interval_minutes,
+        last_error_class,
+    ) = row
     # State is derived, never stored: a failure shows until the next success;
     # a never-refreshed Subscription is "pending", not "ok".
     if last_error is not None:
@@ -269,6 +290,10 @@ def _subscription_entry(
         "state": state,
         "last_refresh_at": last_refresh_at,
         "last_error": last_error,
+        # The failure class of the last failed refresh (ticket #27): NULL for
+        # a Subscription that never failed and for a record written before
+        # the class existed — the panel shows no label for those.
+        "last_error_class": last_error_class,
         # Fetch settings (ticket #13): NULL = the documented default
         # fallback (module default UA; global default interval for #16).
         "user_agent": user_agent,
