@@ -463,6 +463,53 @@ async def test_checking_for_releases_does_not_block_an_update(
     await manager.aclose()
 
 
+async def test_a_check_queued_behind_an_update_keeps_what_the_update_wrote(
+    tmp_path: Path, fake_github: FakeGitHub
+) -> None:
+    """A check that lands mid-update must not answer "an update is already
+    running" (it is not an update) and must not overwrite what the update
+    wrote: its snapshot is taken after the update's final state write."""
+    old = tmp_path / "old-mihomo"
+    old.write_text("#!/bin/sh\nexit 0\n")
+    kernel = StubKernel(old)
+    manager = kernel_manager(tmp_path, kernel, fake_github.url)
+    fake_github.publish(
+        "MetaCubeX/mihomo", "v9.9.9", "mihomo-linux-amd64-v9.9.9.gz", kernel_archive("v9.9.9")
+    )
+
+    in_update = asyncio.Event()
+    proceed = asyncio.Event()
+    calls = 0
+    original = manager.latest_release
+
+    async def paused(component: str) -> Release:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            in_update.set()
+            await proceed.wait()
+        return await original(component)
+
+    manager.latest_release = paused  # type: ignore[method-assign]
+    running = asyncio.create_task(manager.update("kernel"))
+    await in_update.wait()
+    checking = asyncio.create_task(manager.check())
+    # Let the check reach the component lock and queue behind the update.
+    await asyncio.sleep(0)
+    proceed.set()
+
+    updated = await running
+    assert state_of(updated, "kernel")["current"] == "v9.9.9"
+    checked = await checking
+    row = state_of(checked, "kernel")
+    assert row["current"] == "v9.9.9"
+    assert row["latest"] == "v9.9.9"
+    assert row["checked_at"] is not None
+    assert row["error"] is None
+    assert state_of(manager.state(), "kernel")["current"] == "v9.9.9"
+    await manager.aclose()
+
+
 async def test_a_second_update_of_the_same_component_is_refused_while_one_runs(
     tmp_path: Path, fake_github: FakeGitHub
 ) -> None:
