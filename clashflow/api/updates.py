@@ -57,4 +57,4 @@ async def rollback_component(request: Request, name: str) -> list[dict[str, obje
     except UpdateBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except UpdateError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

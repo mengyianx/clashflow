@@ -417,3 +417,12 @@ async def test_a_second_dashboard_update_rolls_back_to_the_first_one(
         served = await panel.client.get("/zui/")
         assert "BUNDLE_A" in served.text
         assert "BUNDLE_B" not in served.text
+
+
+async def test_rollback_without_a_previous_version_reports_a_failure(
+    boot_app: BootApp, fake_github: FakeGitHub
+) -> None:
+    async with boot_app() as panel:
+        failed = await panel.client.post("/api/panel/updates/zashboard/rollback")
+        assert failed.status_code == 502
+        assert "no previous version" in failed.json()["detail"]
