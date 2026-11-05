@@ -3,13 +3,15 @@ with a custom user agent and timeout, then run the fetched bytes through the
 shared apply pipeline (`mihomo -t` validation + atomic swap), hot-applying
 when the target is the Active Config.
 
-Failure classes (spec issue #6), each raising a distinct exception that the
-API layer maps to a status code:
-- network error (transport failure or non-2xx response) -> SubscriptionFetchError
-- content that is not a complete mihomo YAML Config (unparseable YAML OR
-  semantically invalid) -> KernelRejected, carrying the Kernel's own output
-  verbatim; both cases go through `mihomo -t`, the single write-path validator
-- Controller refusal on the Active-Config hot-apply -> HotApplyError
+Failure classes — the three the panel distinguishes (spec issue #6, #27), each
+raising a distinct exception that the API layer maps to a status code:
+- `network` (transport failure or non-2xx response) -> SubscriptionFetchError
+- `kernel-rejected`: content that is not a complete mihomo YAML Config
+  (unparseable YAML OR semantically invalid) -> KernelRejected, carrying the
+  Kernel's own output verbatim; both cases go through `mihomo -t`, the single
+  write-path validator
+- `hot-apply-refused`: Controller refusal on the Active-Config hot-apply ->
+  HotApplyError
 
 In every failure case the previous Config file stays byte-identical:
 `clashflow.apply.atomic_save` only `os.replace`s after a successful
