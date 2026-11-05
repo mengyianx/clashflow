@@ -108,12 +108,45 @@ async def refresh_subscription(
 # one tuple instead of re-listing the classes.
 REFRESH_FAILURES = (SubscriptionFetchError, KernelRejected, HotApplyError)
 
+# The failure class of a failed refresh (ticket #27): the named class travels
+# with the raw error text from the shared dispatch below to the panel, so a
+# self-hoster can tell a provider outage from a Kernel refusal without
+# reading English Kernel output. There is deliberately no invalid-YAML class:
+# the Kernel is the only write-path validator, so unparseable content is a
+# config-test refusal like any other.
+FAILURE_CLASS_NETWORK = "network"
+FAILURE_CLASS_KERNEL_REJECTED = "kernel-rejected"
+FAILURE_CLASS_HOT_APPLY_REFUSED = "hot-apply-refused"
+
+FAILURE_CLASSES = (
+    FAILURE_CLASS_NETWORK,
+    FAILURE_CLASS_KERNEL_REJECTED,
+    FAILURE_CLASS_HOT_APPLY_REFUSED,
+)
+
+
+def failure_class_for(exc: Exception) -> str | None:
+    """The failure class of a refresh failure: the named class of the three
+    pipeline failures, or None for a failure outside the pipeline (e.g. a
+    vanished Config registration) — such a record keeps its raw text and
+    claims no class."""
+    if isinstance(exc, SubscriptionFetchError):
+        return FAILURE_CLASS_NETWORK
+    if isinstance(exc, KernelRejected):
+        return FAILURE_CLASS_KERNEL_REJECTED
+    if isinstance(exc, HotApplyError):
+        return FAILURE_CLASS_HOT_APPLY_REFUSED
+    return None
+
 
 def mark_subscription_refresh_failed(store: MetadataStore, name: str, exc: Exception) -> str:
     """One shared dispatch of a refresh failure onto the store: mark the
     Subscription failed with the failure reason — the Kernel's own output for
-    KernelRejected, the exception text otherwise — and return that reason for
-    the caller to surface (HTTP detail or log line)."""
+    KernelRejected, the exception text otherwise — and with the failure class
+    derived from the exception type. Both writers (the manual-refresh endpoint
+    and the scheduler) go through here, so the same failure reports the same
+    class either way. Returns the reason for the caller to surface (HTTP
+    detail or log line)."""
     reason = exc.output if isinstance(exc, KernelRejected) else str(exc)
-    store.mark_subscription_failed(name, reason)
+    store.mark_subscription_failed(name, reason, failure_class_for(exc))
     return reason

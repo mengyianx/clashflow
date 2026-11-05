@@ -18,7 +18,10 @@ Each due Subscription refreshes through the exact pipeline manual refresh
 uses (`clashflow.refresh.refresh_subscription` with its stored
 `user_agent`, hot-applied when its Config is Active) and the outcome is
 marked on the store exactly like the manual endpoint's, so scheduled results
-surface identically at the seam (`GET /api/panel/subscriptions`).
+surface identically at the seam (`GET /api/panel/subscriptions`). The failure
+class (ticket #27) travels the same way: both writers dispatch on the one
+shared `mark_subscription_refresh_failed`, so a scheduled and a manual
+refresh of the same failure report the same class.
 
 The loop wakes every `CLASHFLOW_SCHEDULER_TICK_SECONDS` seconds (default
 60.0; env-knob precedent: the `CLASHFLOW_RESPAWN_*` supervisor knobs). The
