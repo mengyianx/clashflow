@@ -24,7 +24,7 @@ from clashflow.auth import AuthMiddleware, SessionRegistry
 from clashflow.auth import router as auth_router
 from clashflow.db import RUNTIME_CONFIGS_DIRNAME, MetadataStore, runtime_config_path
 from clashflow.kernel import KernelManager
-from clashflow.migrate import migrate_volume
+from clashflow.migrate import open_metadata_store
 from clashflow.render import RenderFailed
 from clashflow.scheduler import SubscriptionScheduler
 from clashflow.static_mount import SwitchingStaticFiles
@@ -166,9 +166,8 @@ def create_app(
         # anything else writes to the volume, so the backup is the volume as
         # the previous image left it and no code below reads an unmigrated
         # database.
-        migrate_volume(resolved_data)
+        store = open_metadata_store(resolved_data)
         configs_dir = _ensure_layout(resolved_data)
-        store = MetadataStore(resolved_data / "clashflow.db")
         app.state.store = store
         app.state.configs_dir = configs_dir
         active = _ensure_default_config(store, configs_dir)

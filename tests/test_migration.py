@@ -161,8 +161,9 @@ async def test_a_volume_written_by_a_newer_image_refuses_to_start_naming_the_bac
             pass
 
     message = str(excinfo.value)
+    assert "该数据卷已被更新版本的 ClashFlow 使用" in message
     assert "v999" in message
-    assert f"this image supports v{SCHEMA_VERSION}" in message
+    assert f"v{SCHEMA_VERSION}" in message
     assert str(backup) in message
     # The gate runs before anything is written: the volume is untouched.
     assert _version(data / "clashflow.db") == 999

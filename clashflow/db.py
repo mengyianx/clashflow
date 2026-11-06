@@ -1,9 +1,10 @@
 """Metadata store for ClashFlow's `/data` volume (subscriptions, configs, active record).
 
 The database carries a schema version in `PRAGMA user_version` (ADR-0006):
-`clashflow.migrate` reads it, backs the volume up and runs the ordered chain
-before this module's store is opened, and refuses a volume stamped by a newer
-image. The store itself only creates the baseline schema idempotently.
+`clashflow.migrate` reads it, backs the volume up and runs the ordered chain,
+and refuses a volume stamped by a newer image. The migration is the ONLY
+applier of the schema; `MetadataStore` opens a database that is already
+current.
 """
 
 import json
@@ -165,9 +166,13 @@ def validate_config_name(name: str) -> str:
 
 class MetadataStore:
     def __init__(self, db_path: Path) -> None:
+        """Open a database the volume migration already brought to
+        `SCHEMA_VERSION` (`clashflow.migrate.open_metadata_store` is the
+        supported way to get here).
+
+        The schema is deliberately NOT applied on open: one applier only, so
+        an older step can never run over a volume a newer image migrated."""
         self._conn = sqlite3.connect(db_path)
-        ensure_schema(self._conn)
-        self._conn.commit()
 
     def register_config(self, name: str, kind: str) -> None:
         """Boot-time ensure: register the name unless it already exists."""

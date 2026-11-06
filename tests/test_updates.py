@@ -270,9 +270,9 @@ class StubKernel:
 
 
 def kernel_manager(tmp_path: Path, kernel: StubKernel, api: str) -> UpdateManager:
-    from clashflow.db import MetadataStore
+    from clashflow.migrate import open_metadata_store
 
-    store = MetadataStore(tmp_path / "clashflow.db")
+    store = open_metadata_store(tmp_path)
     image_ui = tmp_path / "image-ui"
     image_ui.mkdir(exist_ok=True)
     return UpdateManager(

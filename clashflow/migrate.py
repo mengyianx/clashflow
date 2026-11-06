@@ -29,7 +29,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from clashflow.db import SCHEMA_VERSION, ensure_schema
+from clashflow.db import SCHEMA_VERSION, MetadataStore, ensure_schema
 
 log = logging.getLogger(__name__)
 
@@ -50,13 +50,14 @@ MIGRATIONS: dict[int, Migration] = {
 
 class SchemaTooNew(Exception):
     """The volume's schema is newer than this image understands; starting
-    would let an older code path write a newer database."""
+    would let an older code path write a newer database. ADR-0006 pins the
+    wording, and this message is the only thing a self-hoster has when the
+    container refuses to come up: it names the backup to restore."""
 
     def __init__(self, stored: int, supported: int, backup_dir: Path) -> None:
         super().__init__(
-            f"data volume was written by a newer ClashFlow: stored schema v{stored}, "
-            f"this image supports v{supported}. Restore the backup under {backup_dir} "
-            "before running this image"
+            f"该数据卷已被更新版本的 ClashFlow 使用（库 schema v{stored}，本镜像支持 "
+            f"v{supported}）。请停容器、还原备份 {backup_dir}，再用写入该卷的镜像启动"
         )
         self.stored = stored
         self.supported = supported
@@ -102,6 +103,13 @@ def migrate_volume(data_dir: Path) -> Path | None:
         ) from exc
     log.info("migrated the data volume from schema v%d to v%d", stored, SCHEMA_VERSION)
     return backup
+
+
+def open_metadata_store(data_dir: Path) -> MetadataStore:
+    """Migrate the volume, then open its metadata store — the only supported
+    order, since the store applies no schema of its own."""
+    migrate_volume(data_dir)
+    return MetadataStore(data_dir / DB_FILENAME)
 
 
 def read_version(db_path: Path) -> int:
