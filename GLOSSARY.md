@@ -71,6 +71,11 @@ A Source Config owned by exactly one Subscription; every refresh rewrites it ver
 _中文_: 订阅配置
 _Avoid_: subscription config
 
+**Selection History**:
+A snapshot of the Kernel's node selections kept per Source Config, so switching to another config and back restores the same choices.
+_中文_: 节点选择历史
+_Avoid_: node cache, profile history
+
 **TUN Mode**:
 The Overlay state in which the Kernel captures the gateway's LAN traffic through a TUN device instead of only listening on the proxy port.
 _中文_: TUN 模式

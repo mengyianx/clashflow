@@ -8,7 +8,7 @@ TUN 要接管的是**宿主**的网络栈：`auto-route` 写路由、`auto-redir
 
 - 镜像**只支持 `--network host`**，删除端口映射模式。README 的 `docker run` 模板同时给出 `--cap-add NET_ADMIN` 与 `--device /dev/net/tun`。
 - **TUN 默认关闭**（Overlay 的 `tun.enable: false`）：迁移后行为与 V1 一致（`7890` 显式代理 + 面板），由用户在面板里一键开启。降级路径因此始终存在。
-- **53 端口不隐式接管**：开启 TUN 时面板检测占用（`systemd-resolved`、`dnsmasq`、其他监听者），给出停用指令，用户确认后由 Overlay 设 `dns.listen`。
+- **53 由内核持有，且 TUN 模式下是必需项**：mihomo 的 `dns-hijack` 只劫持进入 tun 设备的流量，LAN 设备指向网关 IP 的 DNS 查询走宿主栈、不经 tun，所以 TUN 模式下 `dns.listen` 必须是 `0.0.0.0:53`，否则 fake-ip 不生效。开启 TUN 时面板先做占用检测（`systemd-resolved`、`dnsmasq`、其他监听者）并给出停用指令，用户确认后才把 `dns.listen` 落到 53；不满足则拒绝开启并说明原因。
 - **启动自检**：`8080`、`9090`（必须回环）、TUN 开启时的 `53` 冲突 → 中文报错并拒绝启动；`7890` 冲突、`ip_forward`、nftables 可用性 → 只警告，并进诊断包。
 - **TUN 健康监测**：定期检查 tun 设备与默认路由，丢失则自动重启内核一次并标红；连续失败转 `degraded`（复用现有退避与上限）。
 
