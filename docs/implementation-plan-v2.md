@@ -14,14 +14,18 @@
 | 旁路由与流量控制：路由器自身代理、绕过大陆、常见端口模式、内网直连、接口绑定、旁路由兼容、masq cache | ✅ | |
 | 订阅转换（内置 subconverter）+ 订阅多 URL | ✅ | |
 | 订阅参数面：模板、关键词/排除/广告过滤、emoji/排序/节点类型、自定义请求头、流量与到期 | ✅ | |
-| 订阅参数面：Age 解密、在线转换后端兜底 | | ✅ |
+| 订阅参数面：Age 加密（走内核 `age-secret-key` + `mihomo age keygen/convert`） | ✅ | |
+| 订阅参数面：在线转换后端兜底 | | ✅ |
 | DNS 最小集（listen / nameserver / fallback / fake-ip-range） | ✅ | |
 | DNS 全量：6 组服务器、fake-ip/fallback 过滤、hosts、域名策略、respect rules、append DNS、缓存与 AAAA、store-fakeip | | ✅ |
 | 设备级排除：IP/CIDR → 内核规则集（ADR-0008） | | ✅ |
 | Overlay 键组扩到 OpenClash 全量 | | ✅ |
-| 节点 / 策略组 / 提供者管理（含 smart、policy_filter、health-check 等字段） | | ✅ |
+| 节点 / 策略组 / 提供者管理（按源配置作用域 + 一键应用到全部；含 smart、policy_filter、health-check 等字段） | | ✅ |
+| 配置生成四段式骨架（段①上线，②③④留接口） | ✅ | |
+| 段②③④完整实现：自定义规则注入、sniffer/hosts/命名策略、组与节点增删改 | | ✅ |
+| 配置摘要（节点/组/规则数、Age 缺 key）与总览状态页（运行状态、出口 IP、更新入口） | ✅ | |
 | 内核多版本（保留 3 版） | | ✅ |
-| 看门狗（进程 / TUN / 出网 / DNS 探测） | | ✅ |
+| 看门狗（进程 / TUN / 出网 / DNS 探测 + 出口 IP 解析写 hosts） | | ✅ |
 | 统计、诊断 zip、定时任务统一 | | ✅ |
 | 运维组：定时重启、日志上限、Rules/GEO/Chnroute 更新、备份恢复、ETag、调试页 | | ✅ |
 | 导入 OpenClash 最终 `config.yaml` | ✅ | |
@@ -63,7 +67,8 @@ subconverter 独立守护：崩溃只影响转换，订阅刷新标 `conversion-
 
 ```text
 clashflow/
-├── render.py      # 纯函数：源 bytes + Overlay → 运行 bytes；失败抛 RenderFailed
+├── render.py      # 四段管线：键合并 → 规则注入 → sniffer/hosts/命名策略 → 组与节点增删改；按段报错
+├── summary.py     # 配置摘要：节点/组/规则计数、Age 缺 key（校验后展示）
 ├── overlay.py     # Overlay 读写、YAML 导出/导入、被覆盖键标注
 ├── datapath.py    # 操作模式 ×端口族× UDP/QUIC 的键映射（六种组合）
 ├── traffic.py     # 流量控制与旁路由参数：绕过大陆、常见端口、内网直连、接口绑定
@@ -91,7 +96,7 @@ web/src/pages/
 ├── Diagnostics/   # 诊断导出与调试页（2.1）
 ```
 
-界面保留 V1 的五屏（总览 / 配置 / 订阅 / 编辑器 / 系统），新增网关、DNS、提供者、统计、诊断五页；不按 OpenClash 的菜单重排——熟悉感归运行面板，管理面板沿用既有信息架构。
+界面保留 V1 的五屏（总览 / 配置 / 订阅 / 编辑器 / 系统），新增网关、DNS、提供者、统计、诊断五页；总览补运行状态、出口 IP 与配置摘要；不按 OpenClash 的菜单重排——熟悉感归运行面板，管理面板沿用既有信息架构。
 
 ## 5. 关键流程
 
@@ -104,6 +109,7 @@ web/src/pages/
 7. **TUN 与看门狗**：30 s 检查 tun 设备、默认路由、出网与 DNS 解析；单次失败重启内核一次，连续失败转 `degraded`（复用现有退避与 `CLASHFLOW_MAX_RESPAWNS`）。
 8. **统计**：60 s 读一次 `/traffic` 与 `/connections`，聚合成「总量 + 按代理组」入 `stats` 表；启动与每日各清理超过 7 天的行。
 9. **诊断**：打包版本、overlay、源与运行配置及 diff、规则集、最近日志、失败类别、宿主网络只读快照（`ip -j addr`、`ip -j route`、`nft list ruleset`、53 监听者）。
+10. **配置摘要**：每次校验通过后统计节点数、组数、规则数、Age 是否缺 key，写进配置记录，总览与订阅列表直接展示。
 
 ## 6. 里程碑与验收
 
@@ -111,9 +117,9 @@ web/src/pages/
 
 | 里程碑 | 内容 | 验收（可运行 smoke） |
 |---|---|---|
-| M1 渲染层与迁移 | `render.py` / `overlay.py` / 迁移链 / apply 管线改造；Overlay 页与运行配置 diff 页 | 用 v1 数据卷启动：自动备份并迁移、内核以运行配置起来；改 `log-level` 后热载且源配置逐字节不变；Overlay 写非法值被拒且两份文件都不变 |
+| M1 渲染层与迁移 | `render.py` 四段骨架 / `overlay.py` / `summary.py` / 迁移链 / apply 管线改造；Overlay 页、运行配置 diff 页、总览状态与摘要 | 用 v1 数据卷启动：自动备份并迁移、内核以运行配置起来；改 `log-level` 后热载且源配置逐字节不变；Overlay 写非法值被拒且两份文件都不变；坏配置被拒时错误带段名、摘要不更新 |
 | M2 数据面与旁路由 | 六种操作模式、代理模式、全端口族、UDP/QUIC；路由器自身代理、绕过大陆、常见端口、内网直连、接口绑定、旁路由兼容 | 六种模式各起一次，每种都能让一台 LAN 设备经 TUN 出网；切到「绕过大陆」后国内直连、国外走代理（用 `curl` 对两个目标验证）；端口族每项 `ss -lntp` 可见且与面板一致 |
-| M3 订阅转换与参数面 | subconverter 内置与守护、多 URL、ETag、模板、关键词/排除/广告过滤、emoji/排序/节点类型、自定义头、流量与到期 | 导入分享链接订阅 → 生成源配置并可激活；加第二个 URL 后节点合并；套 ACL4SSR 模板后规则组出现；关键词过滤生效；subconverter 被杀 → 标 `conversion-failed`、旧配置不变 |
+| M3 订阅转换与参数面 | subconverter 内置与守护、多 URL、ETag、模板、关键词/排除/广告过滤、emoji/排序/节点类型、自定义头、流量与到期、Age 加密订阅 | 导入分享链接订阅 → 生成源配置并可激活；加第二个 URL 后节点合并；套 ACL4SSR 模板后规则组出现；关键词过滤生效；`mihomo age keygen` 生成 key 后能导入加密订阅；subconverter 被杀 → 标 `conversion-failed`、旧配置不变 |
 | M4 导入与发布 2.0 | OpenClash `config.yaml` 导入、迁移说明、README 重写、多架构 | 用导出的 OpenClash 配置导入后整网可用；按新 README 从零部署成功 |
 
 ### 2.1
