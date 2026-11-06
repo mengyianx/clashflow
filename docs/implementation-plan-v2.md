@@ -124,7 +124,7 @@ web/src/pages/
 
 | 里程碑 | 内容 | 验收（可运行 smoke） |
 |---|---|---|
-| M1 渲染层与迁移 | `render.py` 四段骨架、`yamlfix.py`、`rules.py`、`summary.py`、迁移链、apply 管线改造；Overlay 页、diff 页、总览状态与摘要 | 用 v1 数据卷启动：自动备份并迁移、内核以运行配置起来；改 `log-level` 后热载且源配置逐字节不变；坏配置被拒时错误带段名、摘要不更新；缺 `proxies` 与 `proxy-providers` 的订阅被三重校验拦下 |
+| M1 渲染层与迁移 | `render.py` 四段骨架（段②③④ 仅 seam、pass-through）、`yamlfix.py`、`rules.py` 纯函数（未接线）、`summary.py`、迁移链、apply 管线改造；Overlay 页（M1 只开 `log-level`/端口/DNS 上游）、diff 页、总览状态与摘要 | 用 v1 数据卷启动：自动备份并迁移、内核以运行配置起来；改 `log-level` 后热载且源配置逐字节不变；坏配置被拒时错误带段名、摘要不更新；缺 `proxies` 与 `proxy-providers` 的订阅被三重校验拦下 |
 | M2 数据面与旁路由 | DNS 模式 × TUN × 端口四组合、代理模式、全端口族、UDP/QUIC；流量控制全套；模式切换重启、热载限流、apply 自验、启动期 TUN 就绪；netns 端到端用例进 CI | 四组合各起一次，每种都能让一台 LAN 设备出网；切模式后面板提示断连且内核确实重启；手工删掉 tun 设备后自验报 `hot-apply-refused` 并回滚；把 `route-exclude-address-set` 指向不存在的 provider（netns 用例）时自验能抓到 TUN 未创建；`auto-route/auto-redirect` 关闭且排除集非空时保存被拒；切到「绕过大陆」后国内直连、国外走代理 |
 | M3 订阅转换与参数面 | subconverter 守护、多 URL 归一化、ETag、UA 降级、模板、过滤、默认排除、emoji/排序/节点类型、自定义头隔离、流量与到期、Age | 导入分享链接订阅 → 生成源配置并可激活；加第二个 URL 后节点合并；套 ACL4SSR 模板后规则组出现；关键词过滤命中且组内引用被摘除；`mihomo age keygen` 后能导入加密订阅；subconverter 被杀 → 标 `conversion-failed`、旧配置不变 |
 | M4 导入与发布 2.0 | OpenClash `config.yaml` 导入、迁移说明、README 重写、多架构 | 用导出的 OpenClash 配置导入后整网可用；按新 README 从零部署成功 |
