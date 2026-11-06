@@ -125,9 +125,9 @@ async def test_a_refused_hot_apply_is_recorded_as_the_hot_apply_refused_class(
                 raise HotApplyError("forced hot-apply failure")
 
             # The shared restore implementation (ticket #26) lives in
-            # clashflow.apply: the refresh path calls `hot_apply_or_restore`,
-            # which calls `hot_apply` there. Patching that one call site
-            # refuses the hot-apply for both write paths.
+            # clashflow.apply: every write path reaches the Controller through
+            # `commit_config`, which calls `hot_apply`. Patching that one call
+            # site refuses the hot-apply for all three paths.
             monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
             resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
             assert resp.status_code == 502

@@ -14,11 +14,11 @@ raising a distinct exception that the API layer maps to a status code:
   HotApplyError
 
 In every failure case the previous Config file stays byte-identical:
-`clashflow.apply.atomic_save` only `os.replace`s after a successful
+`clashflow.apply.commit_config` only `os.replace`s after a successful
 config-test, and a Controller refusal on the forced hot-apply (HotApplyError)
-restores the pre-refresh bytes through `clashflow.apply.hot_apply_or_restore`
-— the same implementation the save endpoint uses — because the Kernel never
-left the old Config, so disk and running state stay consistent.
+restores the pre-refresh bytes — the same implementation the save endpoint
+and the Active Config switch use — because the Kernel never left the old
+Config, so disk and running state stay consistent.
 """
 
 import logging
@@ -29,8 +29,7 @@ import httpx
 from clashflow.apply import (
     HotApplyError,
     KernelRejected,
-    atomic_save,
-    hot_apply_or_restore,
+    commit_config,
 )
 from clashflow.db import MetadataStore
 from clashflow.kernel import KernelManager
@@ -92,16 +91,21 @@ async def refresh_subscription(
     """Fetch and store one Subscription's Config: validate + atomic-swap via
     the shared apply pipeline, then a forced hot-apply when this Config is
     Active and the Kernel is up. If that hot-apply is refused, the pre-refresh
-    bytes are restored before re-raising (the shared `hot_apply_or_restore`):
+    bytes are restored before re-raising (the shared `commit_config`):
     the Kernel never left the old Config, so the failure classes leave the old
     Config in place on disk too.
     Pipeline exceptions propagate untouched for the API layer to surface
     verbatim."""
     content = await fetch_subscription(client, url, user_agent=user_agent)
-    previous = target.read_bytes() if target.is_file() else None
-    await atomic_save(kernel.binary, kernel.data_dir, target, content)
-    if apply_when_active and kernel.alive():
-        await hot_apply_or_restore(client, secret, target, previous)
+    await commit_config(
+        kernel_bin=kernel.binary,
+        data_dir=kernel.data_dir,
+        client=client,
+        secret=secret,
+        target=target,
+        content=content,
+        should_reload=lambda: apply_when_active and kernel.alive(),
+    )
     log.info("refreshed Subscription-derived Config %s (%d bytes)", target.name, len(content))
 
 

@@ -28,6 +28,7 @@ the copy is a fully independent file that refreshes never touch.
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -39,9 +40,7 @@ from clashflow.apply import (
     HotApplyError,
     KernelRejected,
     Unwritten,
-    atomic_save,
-    hot_apply_or_restore,
-    validate_config,
+    commit_config,
 )
 from clashflow.db import (
     DEFAULT_CONFIG_KIND,
@@ -91,6 +90,36 @@ class CopyConfig(BaseModel):
 
 def _configs_dir(request: Request) -> Path:
     return request.app.state.configs_dir
+
+
+async def _commit(
+    request: Request,
+    target: Path,
+    *,
+    content: bytes | Unwritten,
+    should_reload: Callable[[], bool] | None,
+) -> None:
+    """Commit a Config write through the shared pipeline and map its failures
+    onto the panel's status codes: a missing Config file is 404, a Kernel
+    refusal is 400 carrying the Kernel's own text, a refused reload is 502
+    carrying the Controller's."""
+    kernel: KernelManager = request.app.state.kernel
+    try:
+        await commit_config(
+            kernel_bin=kernel.binary,
+            data_dir=kernel.data_dir,
+            client=request.app.state.api_client,
+            secret=request.app.state.secret,
+            target=target,
+            content=content,
+            should_reload=should_reload,
+        )
+    except ConfigFileMissing as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except KernelRejected as exc:
+        raise HTTPException(status_code=400, detail=exc.output) from exc
+    except HotApplyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/api/panel/configs", status_code=201)
@@ -159,12 +188,11 @@ async def copy_config(request: Request, name: str, body: CopyConfig) -> ConfigEn
         # roll the fresh registration back.
         store.remove_config(body.name)
         raise HTTPException(status_code=409, detail=f"config file already exists: {target.name}")
-    kernel: KernelManager = request.app.state.kernel
     try:
-        await atomic_save(kernel.binary, kernel.data_dir, target, source.read_bytes())
-    except KernelRejected as exc:
+        await _commit(request, target, content=source.read_bytes(), should_reload=None)
+    except HTTPException:
         store.remove_config(body.name)
-        raise HTTPException(status_code=400, detail=exc.output) from exc
+        raise
     log.info("copied config %s -> %s", name, body.name)
     return store.get_config(body.name)
 
@@ -200,15 +228,12 @@ async def save_config(request: Request, name: str) -> ConfigEntry:
     target = _configs_dir(request) / config_filename(name)
     kernel: KernelManager = request.app.state.kernel
     content = await request.body()
-    # The pre-save bytes, read BEFORE the swap: a refused hot-apply puts them
-    # back, so the stored Config stays the one the Kernel keeps running.
-    previous = target.read_bytes() if target.is_file() else None
-    try:
-        await atomic_save(kernel.binary, kernel.data_dir, target, content)
-    except KernelRejected as exc:
-        raise HTTPException(status_code=400, detail=exc.output) from exc
-    if entry["active"] and kernel.alive():
-        await _hot_apply_or_502(request, target, previous)
+    await _commit(
+        request,
+        target,
+        content=content,
+        should_reload=lambda: entry["active"] and kernel.alive(),
+    )
     log.info("saved config %s (%d bytes)", name, len(content))
     return store.get_config(name)
 
@@ -226,36 +251,10 @@ async def set_active_config(request: Request, name: str) -> ConfigEntry:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     target = _configs_dir(request) / config_filename(name)
     kernel: KernelManager = request.app.state.kernel
-    try:
-        await validate_config(kernel.binary, kernel.data_dir, target)
-    except ConfigFileMissing as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except KernelRejected as exc:
-        raise HTTPException(status_code=400, detail=exc.output) from exc
-    if kernel.alive():
-        await _hot_apply_or_502(request, target)
+    await _commit(request, target, content=UNWRITTEN, should_reload=kernel.alive)
     store.activate_config(name)
     log.info("switched Active Config to %s", name)
     return store.get_config(name)
-
-
-async def _hot_apply_or_502(
-    request: Request, target: Path, previous: bytes | None | Unwritten = UNWRITTEN
-) -> None:
-    """Hot-apply the Config; a Controller refusal answers 502 with the
-    Controller's own text, verbatim.
-
-    `previous` is the state the Config file carried before this call wrote
-    it: its bytes, or None when the file was absent (absent restores as
-    absent). The Active Config switch writes nothing, so it hot-applies with
-    UNWRITTEN and a refusal leaves the file exactly as it is.
-    """
-    try:
-        await hot_apply_or_restore(
-            request.app.state.api_client, request.app.state.secret, target, previous
-        )
-    except HotApplyError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.delete("/api/panel/configs/{name}")
