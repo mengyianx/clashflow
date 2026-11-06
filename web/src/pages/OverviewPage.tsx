@@ -1,5 +1,5 @@
 import { ExternalLink, PenLine, Power, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ErrorBanner, useErrorBanner } from "@/components/ErrorBanner";
@@ -19,6 +19,11 @@ export function OverviewPage() {
   const [subscriptions, setSubscriptions] = useState<SubscriptionEntry[] | null>(null);
   const [busy, setBusy] = useState<"start" | "stop" | "restart" | null>(null);
 
+  // `loaded` separates the first read from the background re-reads: a failure
+  // on the first one belongs in the banner, a failure on a later tick does not
+  // (the banner persists until dismissed, so a single hiccup would sit over a
+  // healthy panel and every tick would re-raise it).
+  const loaded = useRef(false);
   const load = useCallback(async () => {
     try {
       const [nextConfigs, nextSubscriptions] = await Promise.all([
@@ -27,8 +32,9 @@ export function OverviewPage() {
       ]);
       setConfigs(nextConfigs);
       setSubscriptions(nextSubscriptions);
+      loaded.current = true;
     } catch (error) {
-      show(error);
+      if (!loaded.current) show(error);
     }
   }, [show]);
 
