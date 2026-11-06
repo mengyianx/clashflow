@@ -90,8 +90,8 @@ export function EditorPage() {
         {entry ? (
           <p className="mt-1 text-xs text-ink-3">
             {entry.summary
-              ? `内容：${entry.summary.nodes} 节点 / ${entry.summary.groups} 组 / ${entry.summary.rules} 规则`
-              : "内容：尚未通过校验"}
+              ? `配置摘要：${entry.summary.nodes} 节点 / ${entry.summary.groups} 组 / ${entry.summary.rules} 规则`
+              : "配置摘要：尚未通过校验"}
           </p>
         ) : null}
       </div>
@@ -100,7 +100,7 @@ export function EditorPage() {
 
       {entry?.summary?.age_key_missing ? (
         <Alert variant="warn" title="缺少 Age key" className="mb-4">
-          这份配置是 Age 加密的，面板没有可用 key，无法统计内容。保存会在渲染阶段被拒。
+          这份配置是 Age 加密的，面板暂无可用的 Age key，无法统计内容，保存会在渲染阶段被拒。
         </Alert>
       ) : null}
 

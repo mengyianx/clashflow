@@ -199,7 +199,7 @@ export function SubscriptionsPage() {
             <TableRow>
               <TableHead>名称</TableHead>
               <TableHead>状态</TableHead>
-              <TableHead>内容</TableHead>
+              <TableHead>配置摘要</TableHead>
               <TableHead>上次刷新</TableHead>
               <TableHead>User-Agent</TableHead>
               <TableHead>间隔（分钟）</TableHead>

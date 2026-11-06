@@ -32,9 +32,13 @@ export function OverviewPage() {
     }
   }, [show]);
 
+  // The shell polls health every 5 s; the records the overview shows are read
+  // again on that same tick, so a switch made in another tab cannot leave the
+  // card naming a Config the Kernel stopped running. A page never starts its
+  // own timer.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, health]);
 
   const runServiceAction = async (action: "start" | "stop" | "restart") => {
     setBusy(action);
@@ -50,9 +54,9 @@ export function OverviewPage() {
   };
 
   const activeConfig = configs?.find((config) => config.active) ?? null;
-  // The recorded Active Config (the list) wins over the polled health string:
-  // health refreshes every 5 s, so right after a switch elsewhere it can still
-  // name the previous Config while the list already names the new one.
+  // The recorded Active Config (the list) wins over the health string: the
+  // list is re-read on the same 5 s tick as health, so it is never older, and
+  // it carries the summary and the owning Subscription this card shows.
   const activeName = activeConfig?.name ?? health?.active_config ?? "";
   const failures = subscriptions?.filter((entry) => entry.state === "error").length ?? 0;
   const lastRefresh = subscriptions?.reduce<string | null>((latest, entry) => {
@@ -144,7 +148,7 @@ export function OverviewPage() {
                 <dd className="text-ink-3">{activeConfig?.subscription ?? "—"}</dd>
               </div>
               <div className="flex justify-between gap-3 py-2.5">
-                <dt className="text-ink-3">内容</dt>
+                <dt className="text-ink-3">配置摘要</dt>
                 <dd className="text-ink-3">
                   {activeConfig?.summary
                     ? `${activeConfig.summary.nodes} 节点 / ${activeConfig.summary.groups} 组 / ${activeConfig.summary.rules} 规则`

@@ -173,7 +173,7 @@ export function ConfigsPage() {
               <TableHead>名称</TableHead>
               <TableHead>类型</TableHead>
               <TableHead>文件名</TableHead>
-              <TableHead>内容</TableHead>
+              <TableHead>配置摘要</TableHead>
               <TableHead>当前</TableHead>
               <TableHead className="text-right">操作</TableHead>
             </TableRow>
