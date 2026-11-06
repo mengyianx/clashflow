@@ -21,8 +21,8 @@ async def test_ui_loads_the_runtime_dashboard_preset_to_the_panel_proxy_without_
         assert "window.__METACUBEXD_CONFIG__" in page.text
         assert "./_nuxt/" in page.text
 
-        # The bare path redirects into the dashboard instead of falling through
-        # to the Management Panel's static mount.
+        # The bare path redirects into the Runtime Dashboard instead of falling
+        # through to the Management Panel's static mount.
         entry = await panel.client.get("/ui")
         assert entry.status_code == 307
         assert entry.headers["location"] == "/ui/"
@@ -53,7 +53,7 @@ async def test_runtime_dashboard_endpoints_resolve_through_the_panel_proxy(
         base = match.group(1)
         assert base == "/api"
 
-        # The dashboard's connect probe (v1.273.1: GET <endpoint>/version).
+        # The Runtime Dashboard's connect probe (v1.273.1: GET <endpoint>/version).
         version = await panel.client.get(f"{base}/version")
         assert version.status_code == 200
         assert "version" in version.json()
@@ -62,8 +62,8 @@ async def test_runtime_dashboard_endpoints_resolve_through_the_panel_proxy(
 async def test_profile_management_stays_hidden_in_static_mode(
     boot_app: BootApp, metacubexd_dist: Path
 ) -> None:
-    """The upstream metacubexd dashboard gates its Profile management UI (an
-    upstream metacubexd feature; and Control Center) on
+    """The upstream metacubexd Runtime Dashboard gates its Profile management UI
+    (an upstream metacubexd feature; and Control Center) on
     `hasFeature('profiles') = hasAgent && features.includes('profiles')`, where
     `hasAgent` comes from `GET <page origin>/api/control/info` — any failure
     (v1.273.1 useControlInfo: catch -> hasAgent=false, features=[]) hides the
@@ -108,17 +108,18 @@ async def test_zui_serves_the_second_runtime_dashboard_preset_to_the_panel_proxy
         # zashboard's own entry document (hash-routed; relative assets).
         assert "<title>zashboard</title>" in page.text
         assert "./assets/" in page.text
-        # The injected bootstrap points the dashboard at the panel's /api proxy
-        # (same origin, secret injected server-side) and hides the two upstream
-        # switches v1 rejects: core upgrade (version pinned to the image) and TUN.
+        # The injected bootstrap points the Runtime Dashboard at the panel's /api
+        # proxy (same origin, secret injected server-side) and hides the two
+        # upstream switches v1 rejects: core upgrade (the Management Panel
+        # refuses the Kernel's upgrade endpoint) and TUN.
         head = page.text[: page.text.index("</head>")]
         assert "secondaryPath" in head
         assert "disableUpgradeCore" in head
         assert "disableTunMode" in head
         assert panel.app.state.secret not in page.text
 
-        # The bare path redirects into the dashboard instead of falling through
-        # to the Management Panel's static mount.
+        # The bare path redirects into the Runtime Dashboard instead of falling
+        # through to the Management Panel's static mount.
         entry = await panel.client.get("/zui")
         assert entry.status_code == 307
         assert entry.headers["location"] == "/zui/"

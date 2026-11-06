@@ -11,7 +11,7 @@ versions the user installed):
 
     /data/runtime/kernel/<version>/mihomo        installed Kernel binaries
     /data/runtime/kernel/current -> <version>    pointer the process manager runs
-    /data/runtime/webui/<component>/<version>/   extracted dashboard bundles
+    /data/runtime/webui/<component>/<version>/   extracted Runtime Dashboard bundles
     /data/runtime/webui/<component>/current      pointer each static mount serves
 
 Every pointer is a symlink replaced with `os.replace` (atomic, no window where
@@ -288,8 +288,13 @@ class UpdateManager:
                     error = str(exc)
                 else:
                     latest = release.version
-                # Read-modify-write under the component's lock (no awaits inside)
-                # so a snapshot cannot overwrite what a just-finished update wrote.
+                # Read-modify-write under the component's lock, with no awaits
+                # inside the critical section. Two consequences, both load
+                # bearing: an update never observes this section (it answers
+                # `UpdateBusy` only from `lock.locked()`, which cannot be true
+                # across an await-free block), and a check that lands mid-update
+                # queues behind it, so its snapshot always includes that
+                # update's final write instead of overwriting it.
                 async with self._locks[component]:
                     state = _read_state(self._store, component)
                     if latest is not None:

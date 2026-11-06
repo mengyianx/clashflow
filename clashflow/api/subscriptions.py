@@ -14,7 +14,8 @@ Failure classes map to status codes like the save pipeline: a fetch failure
 verbatim. Adding fetches through the same pipeline and rolls both records
 back on any failure, so a failed add creates nothing. A failed refresh keeps
 the previous Config file byte-identical and marks the Subscription with the
-reason (`last_error`) for the next scheduled retry (#13).
+reason (`last_error`) and its failure class (`last_error_class`, ticket #27)
+for the next scheduled retry (#13).
 """
 
 import logging
@@ -131,7 +132,9 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
 
 @router.get("/api/panel/subscriptions")
 async def list_subscriptions(request: Request) -> list[SubscriptionEntry]:
-    """The Subscriptions view: state, last refresh time and error reason."""
+    """The Subscriptions view: state, last refresh time, error reason and the
+    failure class of the last failed refresh (ticket #27; None when there is
+    no class to show)."""
     return request.app.state.store.list_subscriptions()
 
 

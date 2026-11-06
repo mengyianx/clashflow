@@ -46,8 +46,9 @@ RUN apk add --no-cache curl \
 # --- Second Runtime Dashboard (zashboard), pinned static release bundle ---
 FROM --platform=$BUILDPLATFORM alpine:3.22 AS zui
 ARG ZASHBOARD_VERSION=v3.30.0
-# dist-no-fonts: the dashboard borrows the client's system fonts (the panel's
-# own CJK stack), keeping the image ~3 MB smaller than the bundled-font builds.
+# dist-no-fonts: the Runtime Dashboard borrows the client's system fonts (the
+# panel's own CJK stack), keeping the image ~3 MB smaller than the bundled-font
+# builds.
 RUN apk add --no-cache curl unzip \
  && curl -sSfL \
       "https://github.com/Zephyruso/zashboard/releases/download/${ZASHBOARD_VERSION}/dist-no-fonts.zip" \

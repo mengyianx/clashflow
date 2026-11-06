@@ -7,7 +7,7 @@ binary never answers.
 
 GitHub is replaced by a local HTTP server (releases JSON + assets) so the tests
 stay offline and deterministic; the Kernel is either the real binary (API-level
-dashboard tests) or a stub (restart/rollback semantics).
+Runtime Dashboard tests) or a stub (restart/rollback semantics).
 """
 
 import asyncio
@@ -29,7 +29,7 @@ from clashflow.updates import Release, UpdateBusy, UpdateError, UpdateManager
 
 
 def ui_bundle(marker: str) -> bytes:
-    """A minimal valid dashboard archive: index.html + the script it references."""
+    """A minimal valid Runtime Dashboard archive: index.html + the script it references."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as bundle:
         bundle.writestr(
@@ -460,6 +460,74 @@ async def test_checking_for_releases_does_not_block_an_update(
     assert state_of(rows, "kernel")["current"] == "v9.9.9"
     proceed.set()
     await checking
+    await manager.aclose()
+
+
+async def test_a_check_that_lands_during_an_update_keeps_the_update_state_and_both_writes_survive(
+    tmp_path: Path, fake_github: FakeGitHub
+) -> None:
+    """A check that lands during an update keeps the update's state, and both
+    writes survive.
+
+    The ordering is not luck: the check's read-modify-write of the component
+    state runs under that component's lock in an await-free critical section,
+    so it cannot interleave with an update's own write, and a check that
+    arrives while an update holds the lock queues behind it. The check
+    therefore takes its snapshot after the update's final state write instead
+    of overwriting it — and, being a check and not an update, it never
+    answers "an update is already running".
+    """
+    old = tmp_path / "old-mihomo"
+    old.write_text("#!/bin/sh\nexit 0\n")
+    kernel = StubKernel(old)
+    manager = kernel_manager(tmp_path, kernel, fake_github.url)
+    fake_github.publish(
+        "MetaCubeX/mihomo", "v9.9.9", "mihomo-linux-amd64-v9.9.9.gz", kernel_archive("v9.9.9")
+    )
+
+    in_update = asyncio.Event()
+    check_fetched = asyncio.Event()
+    proceed = asyncio.Event()
+    calls = 0
+    original = manager.latest_release
+
+    async def paused(component: str) -> Release:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            in_update.set()
+            await proceed.wait()
+        release = await original(component)
+        if calls == 2:
+            # The check's own fetch is done: from here it heads for the
+            # component lock the update is holding.
+            check_fetched.set()
+        return release
+
+    manager.latest_release = paused  # type: ignore[method-assign]
+    running = asyncio.create_task(manager.update("kernel"))
+    await in_update.wait()
+    checking = asyncio.create_task(manager.check())
+    await check_fetched.wait()
+
+    # The check is in flight and cannot finish while the update holds the
+    # component: its snapshot has not landed yet.
+    assert not checking.done()
+    assert state_of(manager.state(), "kernel")["checked_at"] is None
+
+    proceed.set()
+
+    updated = await running
+    assert state_of(updated, "kernel")["current"] == "v9.9.9"
+    checked = await checking
+    row = state_of(checked, "kernel")
+    # The update's write survived the check...
+    assert row["current"] == "v9.9.9"
+    # ...and so did the check's own.
+    assert row["latest"] == "v9.9.9"
+    assert row["checked_at"] is not None
+    assert row["error"] is None
+    assert state_of(manager.state(), "kernel")["current"] == "v9.9.9"
     await manager.aclose()
 
 

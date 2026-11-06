@@ -3,8 +3,11 @@
 Assertions stay at the Management Panel HTTP API seam (`/api/panel/subscriptions*`
 and the config list); the pinned Kernel is a real fixture and the Subscription
 provider is a local HTTP origin serving YAML, so runs are deterministic and
-offline. Each failure class of the fetch pipeline (network error, invalid YAML,
-Kernel validation error) has its own seam test.
+offline. Each failure class of the fetch pipeline has its own seam test:
+`network` (transport error or non-2xx), `kernel-rejected` (the Kernel's
+config-test refuses the content — both unparseable YAML and a semantically
+invalid Config land here) and `hot-apply-refused` (the Controller refuses the
+forced hot-apply of the Active Config).
 """
 
 import contextlib
@@ -17,7 +20,7 @@ from clashflow.apply import HotApplyError
 SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
 SUB_V2 = b"mixed-port: 7893\nallow-lan: true\n"
 # Valid YAML, but the Kernel refuses it: an unknown proxy type (the semantic
-# failure class, distinct from the unparseable-YAML class below).
+# case of `kernel-rejected`, alongside the unparseable YAML below).
 SUB_INVALID_TYPE = (
     b"mixed-port: 7890\n"
     b"proxies:\n"
@@ -26,7 +29,7 @@ SUB_INVALID_TYPE = (
     b"    server: 127.0.0.1\n"
     b"    port: 1\n"
 )
-# Unparseable YAML (the invalid-YAML failure class).
+# Unparseable YAML (the `kernel-rejected` class, same as the semantic case above).
 SUB_INVALID_YAML = b"proxies: [\n"
 
 
@@ -153,11 +156,12 @@ async def test_refreshing_the_active_subscription_derived_config_hot_applies_wit
 async def test_hot_apply_failure_restores_the_previous_subscription_derived_config_and_marks_error(
     boot_app, monkeypatch
 ) -> None:
-    # Failure class: Controller refusal on the forced hot-apply of the
-    # Active Subscription-derived Config. atomic_save has already swapped in
-    # the new bytes when the refusal lands, so the pipeline must restore the
-    # PREVIOUS bytes (no hot-apply — the Kernel never left the old Config)
-    # and keep the failure marking: the old Config stays in place end to end.
+    # Failure class: `hot-apply-refused` (Controller refusal on the forced
+    # hot-apply of the Active Subscription-derived Config). atomic_save has
+    # already swapped in the new bytes when the refusal lands, so the pipeline
+    # must restore the PREVIOUS bytes (no hot-apply — the Kernel never left
+    # the old Config) and keep the failure marking: the old Config stays in
+    # place end to end.
     async with boot_app() as panel:
         with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
@@ -168,7 +172,7 @@ async def test_hot_apply_failure_restores_the_previous_subscription_derived_conf
             async def forced_hot_apply_failure(*args, **kwargs):
                 raise HotApplyError("forced hot-apply failure")
 
-            monkeypatch.setattr("clashflow.refresh.hot_apply", forced_hot_apply_failure)
+            monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
             origin.state["body"] = SUB_V2
             resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
             assert resp.status_code == 502
@@ -187,7 +191,7 @@ async def test_hot_apply_failure_restores_the_previous_subscription_derived_conf
 async def test_failed_refresh_keeps_the_previous_config_and_shows_the_failure_reason(
     boot_app,
 ) -> None:
-    # Failure class: network error (the provider's listener goes away).
+    # Failure class: `network` (the provider's listener goes away).
     async with boot_app() as panel:
         with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
@@ -214,9 +218,10 @@ async def test_failed_refresh_keeps_the_previous_config_and_shows_the_failure_re
 async def test_refresh_with_a_non_2xx_response_is_a_fetch_failure_and_keeps_the_previous_config(
     boot_app,
 ) -> None:
-    # Failure class: the provider answers with a non-2xx status (403/404/410
-    # are the everyday provider failures) — a fetch failure naming the HTTP
-    # status, the previous Config byte-identical, the reason marked.
+    # Failure class: `network` (the provider answers with a non-2xx status
+    # (403/404/410 are the everyday provider failures) — a fetch failure
+    # naming the HTTP status, the previous Config byte-identical, the reason
+    # marked.
     async with boot_app() as panel:
         with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
@@ -240,7 +245,8 @@ async def test_refresh_with_a_non_2xx_response_is_a_fetch_failure_and_keeps_the_
 async def test_refresh_with_invalid_yaml_is_rejected_and_marks_the_subscription(
     boot_app,
 ) -> None:
-    # Failure class: invalid YAML (unparseable; the Kernel names the parse error).
+    # Failure class: `kernel-rejected` (unparseable YAML; the Kernel names the
+    # parse error).
     async with boot_app() as panel:
         with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
@@ -262,7 +268,7 @@ async def test_refresh_with_invalid_yaml_is_rejected_and_marks_the_subscription(
 async def test_refresh_with_kernel_validation_error_is_rejected_and_marks_the_subscription(
     boot_app,
 ) -> None:
-    # Failure class: validation error (parses fine, but is not a complete
+    # Failure class: `kernel-rejected` (parses fine, but is not a complete
     # mihomo Config; the Kernel refuses it verbatim).
     async with boot_app() as panel:
         with origin_server(SUB_V1) as origin:

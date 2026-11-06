@@ -1,5 +1,10 @@
 import { ApiError } from "./api";
-import type { ConfigKind, KernelState, SubscriptionState } from "./api";
+import type {
+  ConfigKind,
+  KernelState,
+  SubscriptionFailureClass,
+  SubscriptionState,
+} from "./api";
 
 /** UI labels for the enums the API returns (the wire values stay English). */
 export const KERNEL_STATE_LABEL: Record<KernelState, string> = {
@@ -18,6 +23,15 @@ export const SUBSCRIPTION_STATE_LABEL: Record<SubscriptionState, string> = {
 export const CONFIG_KIND_LABEL: Record<ConfigKind, string> = {
   "hand-written": "手写配置",
   "subscription-derived": "订阅配置",
+};
+
+/** The class of a failed Subscription refresh (ticket #27): the Chinese name
+ * of the class, shown above the raw error text. The wire values stay
+ * English; the raw text below is never translated. */
+export const SUBSCRIPTION_FAILURE_CLASS_LABEL: Record<SubscriptionFailureClass, string> = {
+  network: "网络故障",
+  "kernel-rejected": "内核拒绝",
+  "hot-apply-refused": "热载被拒",
 };
 
 /** Panel messages carry a Chinese title; the original text is always kept.
@@ -40,6 +54,8 @@ const KNOWN_MESSAGES: Array<[prefix: string, title: string]> = [
   ["user agent must not contain control characters", "User-Agent 含控制字符"],
   ["update interval must be a positive number of minutes", "更新间隔必须是不小于 1 的整数分钟"],
   ["kernel unreachable", "内核没有响应"],
+  // The refused Controller endpoints are not listed here: they answer 403,
+  // and STATUS_TITLES[403] is their one Chinese title.
   ["release check failed", "检查更新失败"],
   ["download failed", "下载失败"],
   ["bundle has no index.html", "更新包不含入口页面"],
@@ -57,6 +73,7 @@ const STATUS_TITLES: Record<number, string> = {
   0: "面板连接中断",
   400: "请求无效",
   401: "未登录",
+  403: "接口未开放",
   404: "目标不存在",
   409: "操作被拒绝",
   500: "面板出错",

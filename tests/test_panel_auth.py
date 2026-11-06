@@ -64,9 +64,9 @@ async def test_unauthenticated_access_to_every_panel_surface_is_rejected(boot_ap
 
             # The Runtime Dashboard surface: HTML navigation is redirected to
             # the login page (the Management Panel shell), other fetches 401.
-            dashboard = await anon.get("/ui/", headers=BROWSER_HEADERS)
-            assert dashboard.status_code == 307
-            assert dashboard.headers["location"] == "/"
+            runtime_dashboard = await anon.get("/ui/", headers=BROWSER_HEADERS)
+            assert runtime_dashboard.status_code == 307
+            assert runtime_dashboard.headers["location"] == "/"
             entry = await anon.get("/ui", headers=BROWSER_HEADERS)
             assert entry.status_code == 307
             assert (await anon.get("/ui/config.js")).status_code == 401

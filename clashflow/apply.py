@@ -2,6 +2,13 @@
 forced hot-apply through the Controller. Shared by the save endpoint, Active
 Config switching, and (per the plan) the Subscription refresh pipeline.
 
+A refused hot-apply leaves the Kernel on the previous Config, so the write
+paths put the pre-write state back on disk (`hot_apply_or_restore`): disk and
+the running state stay consistent, and the next Kernel restart does not boot
+bytes the Controller refused. The pre-write state is the file's bytes — put
+back with the same atomic swap every other Config write uses — or its
+absence when the file was gone before the write: absent restores as absent.
+
 Pinned Kernel (v1.19.32) facts this module encodes:
 - `mihomo -d <home> -t -f <file>` exits 0 = valid, 1 = invalid; the error
   banner goes to STDOUT (logrus writes to os.Stdout), stderr stays empty —
@@ -51,6 +58,18 @@ class HotApplyError(Exception):
     carries the upstream error text verbatim when one was returned."""
 
 
+class Unwritten:
+    """The marker for "the caller wrote nothing to the Config file".
+
+    The Active Config switch only asks the Kernel to load a Config that is
+    already on disk: it writes no bytes, so a refused hot-apply has nothing
+    to restore and the file stays exactly as it is.
+    """
+
+
+UNWRITTEN = Unwritten()
+
+
 async def validate_config(kernel_bin: str, data_dir: Path, config_file: Path) -> None:
     """Run the Kernel config-test on an existing file; raise KernelRejected
     with the Kernel's verbatim output when it fails."""
@@ -87,6 +106,18 @@ async def atomic_save(kernel_bin: str, data_dir: Path, target: Path, content: by
         tmp.unlink(missing_ok=True)
 
 
+def _restore_bytes(config_path: Path, previous: bytes) -> None:
+    """Put the pre-write bytes back with the same swap discipline as every
+    other Config write: a sibling temp file plus `os.replace`, so a reader
+    never sees a half-written Config."""
+    tmp = config_path.with_name(config_path.name + TMP_SUFFIX)
+    try:
+        tmp.write_bytes(previous)
+        os.replace(tmp, config_path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 async def hot_apply(client: httpx.AsyncClient, secret: str, config_path: Path) -> None:
     """Forced config reload through the Controller: `force=true` rebuilds
     listeners/ports/allow-lan; the CLI-pinned Controller settings survive it."""
@@ -102,6 +133,46 @@ async def hot_apply(client: httpx.AsyncClient, secret: str, config_path: Path) -
     if not resp.is_success:
         raise HotApplyError(_upstream_message(resp))
     log.info("hot-applied config %s", config_path)
+
+
+async def hot_apply_or_restore(
+    client: httpx.AsyncClient,
+    secret: str,
+    config_path: Path,
+    previous: bytes | None | Unwritten = UNWRITTEN,
+) -> None:
+    """Forced config reload through the Controller, with the pre-write state
+    put back when the Controller refuses it.
+
+    A refusal means the Kernel never left the old Config, so the stored file
+    must not keep the refused bytes either: the pre-write state goes back on
+    disk and the refusal is re-raised for the caller to surface verbatim.
+
+    `previous` is that pre-write state:
+    - the bytes the file carried: a refusal puts them back — with the same
+      atomic swap every other Config write uses;
+    - None: the file was absent before the write — there are no bytes to put
+      back then, and absent restores as absent: the refused bytes are
+      removed, so the file is gone again;
+    - UNWRITTEN (the default): the caller wrote nothing (the Active Config
+      switch), so a refusal leaves the file exactly as it is.
+
+    Both write paths use this one implementation: the save endpoint and the
+    Subscription refresh. In both the Kernel keeps running the previous
+    Config, so the stored Config has to match it.
+    """
+    try:
+        await hot_apply(client, secret, config_path)
+    except HotApplyError:
+        if isinstance(previous, Unwritten):
+            log.info("nothing was written to %s; left as it is", config_path.name)
+        elif previous is None:
+            config_path.unlink(missing_ok=True)
+            log.info("removed the refused Config bytes on %s (it was absent)", config_path.name)
+        else:
+            _restore_bytes(config_path, previous)
+            log.info("restored the previous Config bytes on %s", config_path.name)
+        raise
 
 
 def _upstream_message(resp: httpx.Response) -> str:
