@@ -20,8 +20,8 @@ docker run -d --name clashflow --restart unless-stopped \
 ```
 
 1. 打开 `http://<网关IP>:8080`，用 `CLASHFLOW_PASSWORD` 登录。
-2. **配置** 页：默认已有一个 `default` 配置（`mixed-port: 7890`、`allow-lan: true`）。可新建（空配置 / 空白模板）、复制为手写配置、编辑保存——保存 = 内核校验 + 原子替换 + 热载，坏配置被拒且内核错误**原样回显**、旧文件不动；热载被控制接口拒绝时旧字节写回磁盘，旧文件同样逐字节不变。
-3. **订阅** 页：粘贴订阅 URL 导入（内容必须是完整的 mihomo YAML）；手动刷新、设置自定义 UA 与更新间隔；到期自动刷新，失败保留旧配置并标红原因与失败类别（刷新管线内的三类：`network` 网络故障 / `kernel-rejected` 内核拒绝 / `hot-apply-refused` 热载被拒；管线外的失败只留原始文本，不带类别），热载被拒时旧配置逐字节不变，下一轮自动重试。
+2. **配置** 页：默认已有一个 `default` 配置（`mixed-port: 7890`、`allow-lan: true`）。可新建（空配置 / 空白模板）、复制为手写配置、编辑保存——保存 = 渲染（源配置 + 网关覆盖）→ 内核校验运行配置 → 原子替换 → 热载，坏配置被拒（渲染失败时消息以段名开头，内核拒绝时错误**原样回显**），源配置与运行配置都不动；热载被控制接口拒绝时两份旧字节都写回磁盘。「网关覆盖」页可改日志级别 / 端口 / DNS 上游，改完立即重渲染并热载当前配置。
+3. **订阅** 页：粘贴订阅 URL 导入（内容必须是完整的 mihomo YAML）；手动刷新、设置自定义 UA 与更新间隔；到期自动刷新，失败保留旧源配置与运行配置并标红原因与失败类别（刷新管线内的四类：`network` 网络故障 / `render-failed` 渲染失败 / `kernel-rejected` 内核拒绝 / `hot-apply-refused` 热载被拒；管线外的失败只留原始文本，不带类别），下一轮自动重试。
 4. **总览** 页打开 **Runtime Dashboard**：`/ui/` 是 metacubexd，`/zui/` 是 zashboard，两者都免手填端点直连面板反代。
 5. LAN 设备把代理指向 `http://<网关IP>:7890`（mixed 端口，HTTP/HTTPS/SOCKS 同口，免认证）。
 
@@ -49,7 +49,7 @@ docker run -d --name clashflow --restart unless-stopped \
 
 ## 数据卷 `/data`
 
-所有状态都在一个卷里：配置与订阅（`configs/`）、元数据（`clashflow.db`：配置注册表、Active 记录、secret）、内核缓存（`cache.db`，节点选择按代理组名保留）、GEO 数据与 provider 缓存。
+所有状态都在一个卷里：源配置与订阅（`configs/`）、内核实际运行的运行配置（`runtime-configs/`：由源配置 + 网关覆盖渲染，可删可重建，不要手改）、元数据（`clashflow.db`：配置注册表、Active 记录、网关覆盖、secret）、内核缓存（`cache.db`，节点选择按代理组名保留）、GEO 数据与 provider 缓存。`runtime/` 只放运行时更新包（ADR-0003），与 `runtime-configs/` 不是一回事。
 
 - **备份**：拷贝整个 `/data`（含 `runtime/`：运行时更新过的内核与面板）。
 - **迁移 / 升级**：挂回同一个卷；镜像内仍有 pin 的基线版本（当前 mihomo `v1.19.32`、metacubexd `v1.273.1`、zashboard `v3.30.0`），内核与运行面板可在「系统」页手动运行时更新（ADR-0003），装进 `runtime/` 且重建容器后保留；升级面板本身仍是拉新镜像重建容器。
@@ -57,11 +57,12 @@ docker run -d --name clashflow --restart unless-stopped \
 
 ## 功能面
 
-- **配置管理**：多配置并存（每订阅一份派生配置 + 任意手写配置，全局唯一名）。保存 = `mihomo -t` 校验 → 原子替换 →（Active 时）热载，不重启内核；校验被拒时旧文件逐字节不变，热载被控制接口拒绝时旧字节写回磁盘、旧文件同样逐字节不变；切换 Active 走同一校验+热载管线，成功才记录。订阅派生配置可手改，但编辑器会警示“下次刷新将覆盖”，并提供一键“复制为手写配置”。
-- **订阅管理**：URL 导入恰生成一份订阅派生配置，刷新只重写它自己；手动 / 定时刷新（全局默认 24h，每订阅可覆盖间隔与 UA）；失败保留旧配置、标红原因与失败类别（刷新管线内的三类：`network` 网络故障 / `kernel-rejected` 内核拒绝 / `hot-apply-refused` 热载被拒，类别在原文上方单独一行；非法 YAML 由内核判定，归入 `kernel-rejected`；管线外的失败只留原始文本、不带类别），热载被拒时旧配置逐字节不变，下一轮自动重试，成功即清除。
+- **配置管理**：多配置并存（每订阅一份源配置 + 任意手写配置，全局唯一名）。保存 = 渲染（源配置 + 网关覆盖）→ `mihomo -t` 校验运行配置 → 原子写回源配置与运行配置 →（Active 时）热载，不重启内核；源配置按提交字节原样落盘，内核只跑运行配置。渲染或校验被拒时两个文件都逐字节不变，热载被控制接口拒绝时旧字节写回磁盘；切换 Active 先渲染目标、成功才记录。运行配置可在面板只读查看，并与源配置做逐键 diff。订阅派生配置可手改，但编辑器会警示“下次刷新将覆盖”，并提供一键“复制为手写配置”。
+- **网关覆盖**：全局一份、对所有配置生效的网关参数（当前开放 `log-level`、`mixed-port` / `allow-lan` / `bind-address`、`dns.nameserver` / `dns.fallback`；TUN 与 DNS 模式在 2.0 数据面版本开放）。未填写的键不接管、沿用各配置自己的值；改完立即重新渲染并热载当前配置。可导出/导入 YAML 备份；编辑器会标出被覆盖的源键。
+- **订阅管理**：URL 导入恰生成一份订阅派生配置，刷新只重写它自己；手动 / 定时刷新（全局默认 24h，每订阅可覆盖间隔与 UA）；失败保留旧源配置与旧运行配置、标红原因与失败类别（刷新管线内的四类：`network` 网络故障 / `render-failed` 渲染失败（消息以段名开头） / `kernel-rejected` 内核拒绝 / `hot-apply-refused` 热载被拒，类别在原文上方单独一行；管线外的失败只留原始文本、不带类别），热载被拒时旧配置逐字节不变，下一轮自动重试，成功即清除。
 - **服务控制**：启动 / 停止 / 重启，状态一目了然（`up` / `respawning` / `down` / `degraded`）；内核意外退出按指数退避自动拉起（始终以当前 Active Config）；GEO 自动更新由内核内置调度负责（默认模板与空白模板均已开启）。
 - **运行面板**：两套上游运行面板并存——metacubexd 在 `/ui/`（静态模式下自动隐藏其 Profile 管理面），zashboard 在 `/zui/`（首次打开自动指向本面板的 `/api` 反代，并隐藏内核升级与 TUN 开关）。两者都在新标签页打开，节点选择 / 延迟测试 / 连接 / 流量 / 日志各取所需。
-- **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；总览 / 配置 / 订阅 / 编辑器 / 系统五屏 + 两套运行面板（Runtime Dashboard）入口：`/ui/` metacubexd、`/zui/` zashboard。YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
+- **面板界面**：中文单语；浅色默认、跟随系统、可手动切深色（选择存 `localStorage`）。桌面为左侧栏、手机为底部标签；总览 / 配置 / 网关覆盖 / 订阅 / 编辑器 / 系统六屏（编辑器另有只读运行配置与 diff 视图）+ 两套运行面板（Runtime Dashboard）入口：`/ui/` metacubexd、`/zui/` zashboard。YAML 编辑器带行号与语法高亮。失败提示统一为「中文标题 + 原文」：面板自撰消息映射成中文，内核实名输出原样保留、不翻译不截断。
 - **系统与更新**：系统页手动检查 GitHub 最新发布，一键更新内核 / metacubexd / zashboard；更新包装在 `/data/runtime/`，容器重建后保留，每个组件可回滚到上一版。内核更新会自动重启内核，新二进制没起来则回滚旧版。详见 `docs/adr/0003-runtime-updates.md`。
 - **安全面**：面板密码 + 服务端会话 cookie（HttpOnly，登出即吊销）；API secret 只在服务端注入反代；Controller 仅回环监听。
 
@@ -75,7 +76,9 @@ curl -s http://127.0.0.1:8080/healthz        # {"status": "ok"}
 
 # M2 配置管理：POST /api/panel/configs（新建）· GET/PUT /api/panel/configs/{name}（读/存）
 #             · POST /api/panel/configs/{name}/copy · PUT /api/panel/configs/{name}/active
-#             坏 YAML → 400 且 detail 为内核错误原文，旧文件逐字节不变
+#             · GET /api/panel/configs/{name}/runtime（只读）· GET .../runtime/diff（逐键 diff）
+#             坏 YAML → 400 且 detail 以渲染段名开头（如 key-merge:），两个文件逐字节不变
+#             网关覆盖：GET/PUT /api/panel/overlay · GET /api/panel/overlay/export · POST .../import
 
 # M3 订阅：POST /api/panel/subscriptions（导入）· POST /api/panel/subscriptions/{name}/refresh
 #         失败标红并保留旧配置；间隔覆盖 + CLASHFLOW_SCHEDULER_TICK_SECONDS 可见自动触发

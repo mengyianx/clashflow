@@ -15,7 +15,11 @@ export type SubscriptionState = "ok" | "error" | "pending";
  * hot-apply). Null when there is no class to show: the failure was outside
  * the refresh pipeline (the Subscription's Config record had disappeared), or
  * there was no failure at all. */
-export type SubscriptionFailureClass = "network" | "kernel-rejected" | "hot-apply-refused";
+export type SubscriptionFailureClass =
+  | "network"
+  | "render-failed"
+  | "kernel-rejected"
+  | "hot-apply-refused";
 
 export interface ServiceHealth {
   kernel: "up" | "down";
@@ -33,6 +37,32 @@ export interface ConfigEntry {
 
 export interface ConfigContent extends ConfigEntry {
   content: string;
+  /** Source keys the Overlay wins at render time: the editor marks them so a
+   * value that never reaches the Kernel is visible as such. */
+  overridden_keys: string[];
+}
+
+/** The global Overlay (gateway settings applied over every Source Config).
+ * Sparse: a key absent from `values` is not owned and the source's value
+ * passes through. `editable` is the M1 panel surface; the API accepts the
+ * remaining schema keys for M2. */
+export interface OverlayState {
+  values: Record<string, unknown>;
+  editable: string[];
+}
+
+export interface RuntimeConfig {
+  content: string;
+  /** Whether the bytes still match a render of the current Source + Overlay. */
+  current: boolean;
+}
+
+export interface RuntimeDiffKey {
+  path: string;
+  source: unknown;
+  runtime: unknown;
+  in_source: boolean;
+  in_runtime: boolean;
 }
 
 export interface SubscriptionEntry {
@@ -149,6 +179,29 @@ export const api = {
       }),
     activate: (name: string) => request<ConfigEntry>(`${panel(name)}/active`, { method: "PUT" }),
     remove: (name: string) => request<{ deleted: string }>(panel(name), { method: "DELETE" }),
+    // The Runtime Config is a read-only build artifact: read it and its
+    // per-key diff against the source, never write it.
+    runtime: (name: string) => request<RuntimeConfig>(`${panel(name)}/runtime`),
+    runtimeDiff: (name: string) =>
+      request<{ keys: RuntimeDiffKey[] }>(`${panel(name)}/runtime/diff`),
+  },
+
+  overlay: {
+    get: () => request<OverlayState>("/api/panel/overlay"),
+    save: (values: Record<string, unknown>) =>
+      request<OverlayState>("/api/panel/overlay", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ values }),
+      }),
+    // The raw YAML request body, exactly what the export produced.
+    import: (yaml: string) =>
+      request<OverlayState>("/api/panel/overlay/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body: yaml,
+      }),
+    exportPath: "/api/panel/overlay/export",
   },
 
   updates: {

@@ -1,6 +1,6 @@
-import { RotateCcw, Save } from "lucide-react";
+import { Eye, RotateCcw, Save } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { ErrorBanner, useErrorBanner } from "@/components/ErrorBanner";
@@ -21,6 +21,7 @@ import { CONFIG_KIND_LABEL } from "@/lib/messages";
 
 export function EditorPage() {
   const { name = "" } = useParams<{ name: string }>();
+  const navigate = useNavigate();
   const { banner, show, clear } = useErrorBanner();
   const [entry, setEntry] = useState<ConfigContent | null>(null);
   const [content, setContent] = useState("");
@@ -90,6 +91,29 @@ export function EditorPage() {
 
       <ErrorBanner banner={banner} onDismiss={clear} />
 
+      {entry && entry.overridden_keys.length > 0 ? (
+        <Alert variant="info" title="以下键由网关覆盖改写" className="mb-4">
+          <div>
+            保存后内核运行的是网关覆盖的值，这里的改动对这些键不会生效：
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {entry.overridden_keys.map((key) => (
+              <Badge key={key} variant="warn">
+                {key}
+              </Badge>
+            ))}
+          </div>
+          <Button
+            size="sm"
+            className="mt-2.5"
+            onClick={() => navigate(`/configs/${encodeURIComponent(name)}/runtime`)}
+          >
+            <Eye />
+            查看运行配置与差异
+          </Button>
+        </Alert>
+      ) : null}
+
       {entry?.kind === "subscription-derived" ? (
         <Alert
           variant="warn"
@@ -117,6 +141,14 @@ export function EditorPage() {
             保存 = 内核校验 + 原子替换 + 热载
           </span>
           <div className="ml-auto flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => navigate(`/configs/${encodeURIComponent(name)}/runtime`)}
+              disabled={busy}
+            >
+              <Eye />
+              运行配置
+            </Button>
             <Button size="sm" onClick={() => void load()} disabled={busy}>
               <RotateCcw />
               重新加载

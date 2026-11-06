@@ -30,6 +30,7 @@ export const CONFIG_KIND_LABEL: Record<ConfigKind, string> = {
  * English; the raw text below is never translated. */
 export const SUBSCRIPTION_FAILURE_CLASS_LABEL: Record<SubscriptionFailureClass, string> = {
   network: "网络故障",
+  "render-failed": "渲染失败",
   "kernel-rejected": "内核拒绝",
   "hot-apply-refused": "热载被拒",
 };
@@ -69,12 +70,18 @@ const KNOWN_MESSAGES: Array<[prefix: string, title: string]> = [
   ["an update is already running", "已有更新正在进行"],
 ];
 
+/** A render pipeline failure names its stage, and an Overlay rejection names
+ * the offending key; both are content errors the user can act on. */
+const RENDER_FAILURE = /^(key-merge|rule-injection|domain-sniff|objects): /;
+const OVERLAY_FAILURE = /^overlay: /;
+
 const STATUS_TITLES: Record<number, string> = {
   0: "面板连接中断",
   400: "请求无效",
   401: "未登录",
   403: "接口未开放",
   404: "目标不存在",
+  405: "只读接口",
   409: "操作被拒绝",
   500: "面板出错",
   502: "上游请求失败",
@@ -93,6 +100,8 @@ function describeMessage(raw: string): MessageText {
   for (const [prefix, title] of KNOWN_MESSAGES) {
     if (detail.startsWith(prefix)) return { title, detail };
   }
+  if (RENDER_FAILURE.test(detail)) return { title: "渲染失败", detail };
+  if (OVERLAY_FAILURE.test(detail)) return { title: "网关覆盖无效", detail };
   if (KERNEL_OUTPUT.test(detail)) return { title: "内核校验未通过", detail };
   return { title: "操作失败", detail };
 }

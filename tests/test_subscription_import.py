@@ -4,9 +4,9 @@ Assertions stay at the Management Panel HTTP API seam (`/api/panel/subscriptions
 and the config list); the pinned Kernel is a real fixture and the Subscription
 provider is a local HTTP origin serving YAML, so runs are deterministic and
 offline. Each failure class of the fetch pipeline has its own seam test:
-`network` (transport error or non-2xx), `kernel-rejected` (the Kernel's
-config-test refuses the content — both unparseable YAML and a semantically
-invalid Config land here) and `hot-apply-refused` (the Controller refuses the
+`network` (transport error or non-2xx), `render-failed` (unparseable YAML,
+refused at the key-merge stage), `kernel-rejected` (the rendered Config fails
+the Kernel's config-test) and `hot-apply-refused` (the Controller refuses the
 forced hot-apply of the Active Config).
 """
 
@@ -19,8 +19,8 @@ from clashflow.apply import HotApplyError
 
 SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
 SUB_V2 = b"mixed-port: 7893\nallow-lan: true\n"
-# Valid YAML, but the Kernel refuses it: an unknown proxy type (the semantic
-# case of `kernel-rejected`, alongside the unparseable YAML below).
+# Valid YAML, but the Kernel refuses the rendered Config: an unknown proxy
+# type (the `kernel-rejected` case).
 SUB_INVALID_TYPE = (
     b"mixed-port: 7890\n"
     b"proxies:\n"
@@ -29,7 +29,7 @@ SUB_INVALID_TYPE = (
     b"    server: 127.0.0.1\n"
     b"    port: 1\n"
 )
-# Unparseable YAML (the `kernel-rejected` class, same as the semantic case above).
+# Unparseable YAML: the key-merge stage refuses it (`render-failed`).
 SUB_INVALID_YAML = b"proxies: [\n"
 
 
@@ -245,8 +245,8 @@ async def test_refresh_with_a_non_2xx_response_is_a_fetch_failure_and_keeps_the_
 async def test_refresh_with_invalid_yaml_is_rejected_and_marks_the_subscription(
     boot_app,
 ) -> None:
-    # Failure class: `kernel-rejected` (unparseable YAML; the Kernel names the
-    # parse error).
+    # Failure class: `render-failed` (the key-merge stage cannot parse the
+    # fetched bytes and names itself).
     async with boot_app() as panel:
         with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
@@ -256,13 +256,15 @@ async def test_refresh_with_invalid_yaml_is_rejected_and_marks_the_subscription(
             resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
             assert resp.status_code == 400
             detail = resp.json()["detail"]
-            assert "did not find expected node content" in detail  # the Kernel's own words
+            assert detail.startswith("key-merge: ")
+            assert "not valid YAML" in detail
 
         assert (panel.data_dir / "configs" / "prov.yaml").read_bytes() == before
         assert list((panel.data_dir / "configs").glob("*.tmp")) == []
         entry = (await panel.client.get("/api/panel/subscriptions")).json()[0]
         assert entry["state"] == "error"
-        assert "did not find expected node content" in entry["last_error"]
+        assert entry["last_error_class"] == "render-failed"
+        assert entry["last_error"].startswith("key-merge: ")
 
 
 async def test_refresh_with_kernel_validation_error_is_rejected_and_marks_the_subscription(
@@ -301,7 +303,7 @@ async def test_adding_a_subscription_that_fails_fetch_or_validation_creates_noth
         with origin_server(SUB_INVALID_YAML) as origin:
             resp = await _add_subscription(panel, "yamlbad", origin.url)
         assert resp.status_code == 400
-        assert "test failed" in resp.json()["detail"]
+        assert resp.json()["detail"].startswith("key-merge: ")
 
         assert (await panel.client.get("/api/panel/subscriptions")).json() == []
         names = {c["name"] for c in (await panel.client.get("/api/panel/configs")).json()}

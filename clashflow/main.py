@@ -14,14 +14,17 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from clashflow.api.configs import router as configs_router
+from clashflow.api.overlay import router as overlay_router
 from clashflow.api.service import router as service_router
 from clashflow.api.subscriptions import router as subscriptions_router
 from clashflow.api.updates import router as updates_router
 from clashflow.apiproxy import router as apiproxy_router
+from clashflow.apply import render_runtime_config
 from clashflow.auth import AuthMiddleware, SessionRegistry
 from clashflow.auth import router as auth_router
-from clashflow.db import MetadataStore
+from clashflow.db import RUNTIME_CONFIGS_DIRNAME, MetadataStore, runtime_config_path
 from clashflow.kernel import KernelManager
+from clashflow.render import RenderFailed
 from clashflow.scheduler import SubscriptionScheduler
 from clashflow.static_mount import SwitchingStaticFiles
 from clashflow.ui import router as ui_router
@@ -44,6 +47,9 @@ geo-update-interval: 24
 
 def _ensure_layout(data_dir: Path) -> Path:
     (data_dir / "configs").mkdir(parents=True, exist_ok=True)
+    # Rendered artifacts live beside the sources, never under `/data/runtime/`
+    # (Runtime Update payloads, ADR-0003).
+    (data_dir / RUNTIME_CONFIGS_DIRNAME).mkdir(parents=True, exist_ok=True)
     return data_dir / "configs"
 
 
@@ -181,16 +187,36 @@ def create_app(
         app.state.updates = updates
 
         def active_config_path() -> Path:
-            return configs_dir / f"{store.get_active() or DEFAULT_CONFIG_NAME}.yaml"
+            # The Kernel only ever runs a Runtime Config (ADR-0004). Rendering
+            # on every spawn (boot, restart, respawn) is also what makes the
+            # artifact rebuildable: delete it and the next spawn recreates it
+            # from the Source Config + Overlay, byte-identically.
+            name = store.get_active() or DEFAULT_CONFIG_NAME
+            runtime = runtime_config_path(resolved_data, name)
+            try:
+                render_runtime_config(configs_dir / f"{name}.yaml", runtime, store.get_overlay())
+            except (RenderFailed, OSError) as exc:
+                # Keep the previous artifact if there is one; the Kernel must
+                # never be pointed at the Source Config instead.
+                log.error("failed to render config %s into %s: %s", name, runtime.name, exc)
+            return runtime
 
         supervisor = manager.supervise(active_config_path, secret)
-        try:
-            manager.start(configs_dir / f"{active}.yaml", secret)
-        except OSError as exc:
-            log.error("kernel failed to spawn: %s", exc)
+        boot_runtime = active_config_path()
+        if boot_runtime.is_file():
+            try:
+                manager.start(boot_runtime, secret)
+            except OSError as exc:
+                log.error("kernel failed to spawn: %s", exc)
+            else:
+                ready = await _wait_ready(manager, secret, boot_timeout)
+                log.info("kernel %s", "ready" if ready else "failed to become ready")
         else:
-            ready = await _wait_ready(manager, secret, boot_timeout)
-            log.info("kernel %s", "ready" if ready else "failed to become ready")
+            log.error(
+                "no Runtime Config for %s; the Kernel is not started until the "
+                "Source Config renders (ADR-0004 forbids pointing -f at the source)",
+                active,
+            )
 
         # Subscription auto-refresh scheduler (plan §5 flow 1, ticket #16):
         # starts with the panel, stops with it like the supervisor.
@@ -221,6 +247,7 @@ def create_app(
     # router owns /api/panel/auth/* and the public /healthz liveness route.
     app.include_router(auth_router)
     app.include_router(configs_router)
+    app.include_router(overlay_router)
     app.include_router(service_router)
     app.include_router(subscriptions_router)
     # Panel routers stay above the /api reverse proxy: an explicit panel route

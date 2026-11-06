@@ -11,13 +11,18 @@ Empty Config semantics: creation writes the YAML empty mapping `{}`, which
 the pinned Kernel (v1.19.32) loads as a defaults-only config — a zero-byte
 file is refused by the Kernel ("configuration file … is empty").
 
-Save semantics: validate (`mihomo -t`) → atomic swap → hot-apply when the
-Config is the Active one. A Kernel rejection answers 400 with the Kernel's
-own output and leaves the stored file untouched; a refused hot-apply answers
-502 with the Controller's refusal text and puts the pre-save state back — the
-pre-save bytes, or absence when the file was gone (absent restores as absent)
-— so the stored Config stays the one the Kernel keeps running (the same
-restore the Subscription refresh uses).
+Save semantics (ADR-0004): render (Source + Overlay) → `mihomo -t` on the
+RENDERED Runtime Config → atomic writes of the Source Config (verbatim) and
+the Runtime Config → hot-apply when the Config is the Active one. A render
+failure answers 400 with a message that begins with the failing stage; a
+Kernel rejection answers 400 with the Kernel's own output; either leaves both
+files untouched. A refused hot-apply answers 502 with the Controller's refusal
+text and puts both pre-save states back — the pre-save bytes, or absence when
+a file was gone (absent restores as absent) — so the stored Config stays the
+one the Kernel keeps running (the same restore the Subscription refresh uses).
+
+The Runtime Config is read-only: it is a build artifact previewable at
+`GET .../runtime` and diffable at `GET .../runtime/diff`, never writable.
 
 Blank template semantics (ticket #11): `POST` with `template: true` writes
 the minimal skeleton (`mixed-port: 7890`, `allow-lan: true`, plus the GEO
@@ -34,13 +39,14 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from clashflow.api.failures import raise_for_commit_failure
 from clashflow.apply import (
     UNWRITTEN,
     ConfigFileMissing,
     HotApplyError,
     KernelRejected,
     Unwritten,
-    commit_config,
+    commit_rendered_config,
 )
 from clashflow.db import (
     DEFAULT_CONFIG_KIND,
@@ -49,9 +55,13 @@ from clashflow.db import (
     ConfigIsActive,
     ConfigNotFound,
     config_filename,
+    runtime_config_path,
     validate_config_name,
 )
 from clashflow.kernel import KernelManager
+from clashflow.overlay import diff as overlay_diff
+from clashflow.overlay import overridden_keys
+from clashflow.render import RenderFailed, load_document, render
 
 log = logging.getLogger(__name__)
 
@@ -94,32 +104,30 @@ def _configs_dir(request: Request) -> Path:
 
 async def _commit(
     request: Request,
-    target: Path,
+    name: str,
     *,
     content: bytes | Unwritten,
     should_reload: Callable[[], bool] | None,
 ) -> None:
     """Commit a Config write through the shared pipeline and map its failures
-    onto the panel's status codes: a missing Config file is 404, a Kernel
-    refusal is 400 carrying the Kernel's own text, a refused reload is 502
-    carrying the Controller's."""
+    onto the panel's status codes: a missing Config file is 404, a render-stage
+    failure is 400 naming the stage, a Kernel refusal is 400 carrying the
+    Kernel's own text, a refused reload is 502 carrying the Controller's."""
     kernel: KernelManager = request.app.state.kernel
     try:
-        await commit_config(
+        await commit_rendered_config(
             kernel_bin=kernel.binary,
             data_dir=kernel.data_dir,
             client=request.app.state.api_client,
             secret=request.app.state.secret,
-            target=target,
+            source_target=_configs_dir(request) / config_filename(name),
+            runtime_target=runtime_config_path(kernel.data_dir, name),
             content=content,
+            overlay=request.app.state.store.get_overlay(),
             should_reload=should_reload,
         )
-    except ConfigFileMissing as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except KernelRejected as exc:
-        raise HTTPException(status_code=400, detail=exc.output) from exc
-    except HotApplyError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except (ConfigFileMissing, RenderFailed, KernelRejected, HotApplyError) as exc:
+        raise_for_commit_failure(exc)
 
 
 @router.post("/api/panel/configs", status_code=201)
@@ -189,7 +197,7 @@ async def copy_config(request: Request, name: str, body: CopyConfig) -> ConfigEn
         store.remove_config(body.name)
         raise HTTPException(status_code=409, detail=f"config file already exists: {target.name}")
     try:
-        await _commit(request, target, content=source.read_bytes(), should_reload=None)
+        await _commit(request, body.name, content=source.read_bytes(), should_reload=None)
     except HTTPException:
         store.remove_config(body.name)
         raise
@@ -198,39 +206,127 @@ async def copy_config(request: Request, name: str, body: CopyConfig) -> ConfigEn
 
 
 @router.get("/api/panel/configs/{name}")
-async def get_config_content(request: Request, name: str) -> dict[str, str | bool]:
-    """The Editor read side: the registered entry plus the raw file content
-    verbatim (the file is the source of truth; the panel never rewrites it)."""
+async def get_config_content(request: Request, name: str) -> dict[str, object]:
+    """The Editor read side: the registered entry, the raw Source Config
+    content verbatim (the file is the source of truth; the panel never
+    rewrites it), and the keys the Overlay currently wins. Those keys are what
+    the editor marks as overridden: a value the user edits there never reaches
+    the Kernel."""
+    store = request.app.state.store
     try:
-        entry = request.app.state.store.get_config(name)
+        entry = store.get_config(name)
     except ConfigNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     path = _configs_dir(request) / config_filename(name)
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"config file missing: {path.name}")
-    return {**entry, "content": path.read_text()}
+    try:
+        source_document = load_document(path.read_bytes())
+    except RenderFailed:
+        # An unparseable Source Config has no keys to mark; the save path
+        # reports the render failure when the user actually saves.
+        source_document = {}
+    return {
+        **entry,
+        "content": path.read_text(),
+        "overridden_keys": overridden_keys(source_document, store.get_overlay()),
+    }
+
+
+def _runtime_path(request: Request, name: str) -> Path:
+    kernel: KernelManager = request.app.state.kernel
+    return runtime_config_path(kernel.data_dir, name)
+
+
+@router.get("/api/panel/configs/{name}/runtime")
+async def get_runtime_config(request: Request, name: str) -> dict[str, object]:
+    """The Runtime Config, read-only: the rendered bytes the Kernel runs, plus
+    whether they still match a render of the current Source Config and
+    Overlay. There is deliberately no write endpoint — the Runtime Config is a
+    build artifact, and a second editable copy would be a second truth."""
+    store = request.app.state.store
+    try:
+        store.get_config(name)
+    except ConfigNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    runtime = _runtime_path(request, name)
+    content = runtime.read_bytes() if runtime.is_file() else None
+    if content is None:
+        raise HTTPException(
+            status_code=404, detail=f"runtime config not rendered yet: {runtime.name}"
+        )
+    source = _configs_dir(request) / config_filename(name)
+    current = False
+    if source.is_file():
+        try:
+            current = render(source.read_bytes(), store.get_overlay()) == content
+        except RenderFailed:
+            current = False
+    return {"content": content.decode("utf-8", errors="replace"), "current": current}
+
+
+@router.api_route(
+    "/api/panel/configs/{name}/runtime",
+    methods=["POST", "PUT", "PATCH", "DELETE"],
+    status_code=405,
+)
+async def write_runtime_config(name: str) -> None:
+    """Explicit refusal: the Runtime Config is a build artifact and has no
+    write endpoint. Without this route the method would fall through to the
+    Controller reverse proxy and read as "unknown kernel route" instead."""
+    raise HTTPException(
+        status_code=405,
+        detail=f"runtime config is read-only; edit the Source Config or the Overlay: {name}",
+    )
+
+
+@router.get("/api/panel/configs/{name}/runtime/diff")
+async def get_runtime_diff(request: Request, name: str) -> dict[str, object]:
+    """Per-key differences between the Runtime Config and its Source Config:
+    only the keys the Overlay changed, which is the audit trail for "what did
+    the panel add or replace?". The diff is computed structurally, so a
+    formatting-only difference is not a row."""
+    store = request.app.state.store
+    try:
+        store.get_config(name)
+    except ConfigNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    runtime = _runtime_path(request, name)
+    if not runtime.is_file():
+        raise HTTPException(
+            status_code=404, detail=f"runtime config not rendered yet: {runtime.name}"
+        )
+    source = _configs_dir(request) / config_filename(name)
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail=f"config file missing: {source.name}")
+    try:
+        source_document = load_document(source.read_bytes())
+        runtime_document = load_document(runtime.read_bytes())
+    except RenderFailed as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"keys": overlay_diff(source_document, runtime_document)}
 
 
 @router.put("/api/panel/configs/{name}")
 async def save_config(request: Request, name: str) -> ConfigEntry:
-    """Validate the raw YAML body with the Kernel config-test, atomically swap
-    it into the Config's file, and hot-apply it when this Config is Active
-    (same process, no restart). On validation failure the stored file stays
-    byte-identical and the Kernel's error output is returned verbatim. On a
-    refused hot-apply the pre-save bytes go back on disk (the Kernel keeps
-    running the previous Config) and the Controller's refusal text is returned
+    """Store the raw YAML body as the Source Config, render it with the
+    Overlay, validate the RESULT with the Kernel config-test, and hot-apply the
+    Runtime Config when this Config is Active (same process, no restart). A
+    render or validation failure leaves both files byte-identical and returns
+    the render stage name or the Kernel's output verbatim. On a refused
+    hot-apply both pre-save states go back on disk (the Kernel keeps running
+    the previous Config) and the Controller's refusal text is returned
     verbatim."""
     store = request.app.state.store
     try:
         entry = store.get_config(name)
     except ConfigNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    target = _configs_dir(request) / config_filename(name)
     kernel: KernelManager = request.app.state.kernel
     content = await request.body()
     await _commit(
         request,
-        target,
+        name,
         content=content,
         should_reload=lambda: entry["active"] and kernel.alive(),
     )
@@ -249,9 +345,8 @@ async def set_active_config(request: Request, name: str) -> ConfigEntry:
         store.get_config(name)
     except ConfigNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    target = _configs_dir(request) / config_filename(name)
     kernel: KernelManager = request.app.state.kernel
-    await _commit(request, target, content=UNWRITTEN, should_reload=kernel.alive)
+    await _commit(request, name, content=UNWRITTEN, should_reload=kernel.alive)
     store.activate_config(name)
     log.info("switched Active Config to %s", name)
     return store.get_config(name)
@@ -277,5 +372,6 @@ async def delete_config(request: Request, name: str) -> dict[str, str]:
     except ConfigIsActive as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     (_configs_dir(request) / config_filename(name)).unlink(missing_ok=True)
+    _runtime_path(request, name).unlink(missing_ok=True)
     log.info("deleted config %s", name)
     return {"deleted": name}

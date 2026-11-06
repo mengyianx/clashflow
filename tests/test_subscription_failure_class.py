@@ -1,17 +1,16 @@
 """Ticket #27: the failure class of a failed Subscription refresh.
 
 A failed refresh carries a class next to its raw error text — `network`,
-`kernel-rejected` or `hot-apply-refused` — from the metadata store through
-the Subscription API to the panel. Assertions stay at the Management Panel
+`render-failed`, `kernel-rejected` or `hot-apply-refused` — from the metadata
+store through the Subscription API to the panel. Assertions stay at the Management Panel
 HTTP API seam (and, for the migration, at the volume's database file); the
 pinned Kernel is a real fixture and the Subscription provider is a local HTTP
 origin, so runs are deterministic and offline.
 
-There is deliberately no invalid-YAML class, and no assertion here reads the
-panel's source: the Kernel is the only write-path validator, so unparseable
-content reaches the Kernel's config-test and comes back as a
-`kernel-rejected` failure like any other config-test refusal. That is the
-behaviour the class assertions pin, at the API seam.
+Unparseable YAML now fails before the Kernel: the render pipeline's key-merge
+stage parses the fetched bytes, so the class is `render-failed` and the message
+begins with the stage name (ADR-0004). Content the renderer can parse but the
+Kernel refuses is still `kernel-rejected`.
 """
 
 import asyncio
@@ -26,8 +25,8 @@ from conftest import origin_server
 from clashflow.apply import HotApplyError
 
 SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
-# Unparseable YAML: the fetched bytes reach the Kernel config-test and are
-# refused there — a `kernel-rejected` failure, never a class of its own.
+# Unparseable YAML: the fetched bytes never reach the Kernel — the render
+# pipeline's key-merge stage rejects them as `render-failed`.
 SUB_INVALID_YAML = b"proxies: [\n"
 
 
@@ -93,11 +92,9 @@ async def test_a_non_2xx_provider_response_is_recorded_as_the_network_class(boot
         assert "HTTP 403" in entry["last_error"]
 
 
-async def test_content_the_kernel_refuses_is_recorded_as_the_kernel_rejected_class(
-    boot_app,
-) -> None:
-    # The Kernel's config-test refuses the fetched content: `kernel-rejected`,
-    # with the Kernel's own output kept as the raw text.
+async def test_unparseable_content_is_recorded_as_the_render_failed_class(boot_app) -> None:
+    # The key-merge stage cannot parse the fetched bytes: `render-failed`,
+    # with the stage name leading the raw text so the failure is locatable.
     async with boot_app() as panel:
         with origin_server(SUB_V1) as origin:
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
@@ -106,8 +103,9 @@ async def test_content_the_kernel_refuses_is_recorded_as_the_kernel_rejected_cla
             assert resp.status_code == 400
 
         entry = await _entry(panel, "prov")
-        assert entry["last_error_class"] == "kernel-rejected"
-        assert "did not find expected node content" in entry["last_error"]
+        assert entry["last_error_class"] == "render-failed"
+        assert entry["last_error"].startswith("key-merge: ")
+        assert "not valid YAML" in entry["last_error"]
 
 
 async def test_a_refused_hot_apply_is_recorded_as_the_hot_apply_refused_class(
@@ -126,7 +124,7 @@ async def test_a_refused_hot_apply_is_recorded_as_the_hot_apply_refused_class(
 
             # The shared restore implementation (ticket #26) lives in
             # clashflow.apply: every write path reaches the Controller through
-            # `commit_config`, which calls `hot_apply`. Patching that one call
+            # `commit_rendered_config`, which calls `hot_apply`. Patching that one call
             # site refuses the hot-apply for all three paths.
             monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
             resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
@@ -146,7 +144,7 @@ async def test_a_successful_refresh_clears_the_class_and_the_error_text(boot_app
             origin.state["body"] = SUB_INVALID_YAML
             resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
             assert resp.status_code == 400
-            assert (await _entry(panel, "prov"))["last_error_class"] == "kernel-rejected"
+            assert (await _entry(panel, "prov"))["last_error_class"] == "render-failed"
 
             # The provider recovers; the next refresh succeeds.
             origin.state["body"] = SUB_V1

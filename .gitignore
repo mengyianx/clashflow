@@ -53,3 +53,4 @@ zashboard/
 # Logs
 *.log
 logs/
+tests/test_overlay_render.py

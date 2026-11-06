@@ -126,7 +126,7 @@ async def test_a_failing_scheduled_refresh_keeps_the_old_config_and_error_marker
             await _eventually(marked_error)
             entry = await _subscription_state(panel, "prov")
             assert entry["state"] == "error"
-            assert "did not find expected node content" in entry["last_error"]
+            assert entry["last_error"].startswith("key-merge: ")
             # The failing cycle keeps the old Config byte-identical.
             assert await _config_content(panel, "prov") == SUB_V1.decode()
 

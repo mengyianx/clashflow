@@ -80,6 +80,12 @@ class KernelManager:
     def _spawn(self, config_path: Path, secret: str) -> None:
         if self.alive():
             return
+        # mihomo auto-creates a default Config when `-f` names a missing file
+        # (the same behaviour `-t` shows), which would silently start the
+        # Kernel with defaults. Refuse instead: `start`/`restart` raise to their
+        # caller and the supervisor's OSError path backs off visibly.
+        if not config_path.is_file():
+            raise FileNotFoundError(f"kernel config missing: {config_path}")
         self._proc = subprocess.Popen(
             [
                 self._bin,

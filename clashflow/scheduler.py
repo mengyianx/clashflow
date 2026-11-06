@@ -124,6 +124,7 @@ class SubscriptionScheduler:
                 url,
                 target,
                 apply_when_active=bool(active),
+                overlay=self._store.get_overlay(),
                 user_agent=user_agent,
             )
         # ConfigNotFound: the Config registration can be gone while the
