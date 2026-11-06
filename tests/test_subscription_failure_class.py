@@ -210,12 +210,15 @@ async def test_booting_on_a_pre_change_database_keeps_the_records_and_adds_the_c
             assert resp.status_code == 502
         assert (await _entry(panel, "prov"))["last_error_class"] == "network"
 
-    # Rewrite the database file into its pre-change shape: the same schema
-    # without the failure-class column, and unstamped — that column arrived
-    # together with schema v1, so a database without it is a V1-volume-era
-    # database as far as the version gate is concerned.
+    # Rewrite the database file into its pre-change shape: the schema without
+    # the columns that arrived later (the failure class with v1, the link and
+    # the summary with v2), and unstamped — so a database without them is a
+    # V1-volume-era database as far as the version gate is concerned.
     conn = sqlite3.connect(data / "clashflow.db")
     conn.execute("ALTER TABLE subscriptions DROP COLUMN last_error_class")
+    conn.execute("DROP INDEX subscriptions_config_name")
+    conn.execute("ALTER TABLE subscriptions DROP COLUMN config_name")
+    conn.execute("ALTER TABLE configs DROP COLUMN summary")
     conn.execute("PRAGMA user_version = 0")
     conn.commit()
     conn.close()

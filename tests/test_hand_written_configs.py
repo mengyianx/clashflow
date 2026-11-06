@@ -42,6 +42,8 @@ async def test_template_creation_yields_a_valid_config_that_passes_validation_an
             "kind": "hand-written",
             "filename": "fresh.yaml",
             "active": False,
+            "summary": None,
+            "subscription": None,
         }
         # The file carries the plan's blank skeleton, not the empty mapping:
         # the template Config is runnable the moment it becomes Active.
@@ -59,6 +61,8 @@ async def test_template_creation_yields_a_valid_config_that_passes_validation_an
             "kind": "hand-written",
             "filename": "fresh.yaml",
             "active": True,
+            "summary": {"nodes": 0, "groups": 0, "rules": 0, "age_key_missing": False},
+            "subscription": None,
         }
         assert panel.app.state.kernel.pid == pid_before
 
@@ -107,6 +111,8 @@ async def test_copy_produces_an_independent_config_and_edits_to_one_never_affect
             "kind": "hand-written",
             "filename": "cloned.yaml",
             "active": False,
+            "summary": {"nodes": 1, "groups": 0, "rules": 0, "age_key_missing": False},
+            "subscription": None,
         }
 
         configs_dir = panel.data_dir / "configs"
@@ -159,6 +165,8 @@ async def test_copy_flow_works_on_subscription_derived_configs(boot_app) -> None
             "kind": "hand-written",
             "filename": "sub1-hand.yaml",
             "active": False,
+            "summary": {"nodes": 1, "groups": 0, "rules": 0, "age_key_missing": False},
+            "subscription": None,
         }
 
         configs_dir = panel.data_dir / "configs"

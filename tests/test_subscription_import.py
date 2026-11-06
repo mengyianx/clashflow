@@ -57,6 +57,7 @@ async def test_adding_a_subscription_creates_exactly_one_subscription_derived_co
             entry = resp.json()
             assert entry["name"] == "prov"
             assert entry["url"] == origin.url
+            assert entry["config_name"] == "prov"
             assert entry["config"] == "prov.yaml"
             assert entry["state"] == "ok"
             assert entry["last_refresh_at"] is not None
@@ -72,6 +73,8 @@ async def test_adding_a_subscription_creates_exactly_one_subscription_derived_co
                     "kind": "subscription-derived",
                     "filename": "prov.yaml",
                     "active": False,
+                    "summary": {"nodes": 1, "groups": 0, "rules": 0, "age_key_missing": False},
+                    "subscription": "prov",
                 }
             ]
             assert {c["name"] for c in configs} == {"default", "prov"}

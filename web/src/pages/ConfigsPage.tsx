@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import { api, type ConfigEntry } from "@/lib/api";
 import { CONFIG_KIND_LABEL } from "@/lib/messages";
+import { formatSummary } from "@/lib/utils";
 
 type CreateMode = { template: boolean } | null;
 
@@ -135,7 +136,7 @@ export function ConfigsPage() {
         <Copy />
         复制
       </Button>
-      {config.active || config.kind === "subscription-derived" ? null : (
+      {config.active || config.subscription !== null ? null : (
         <Button size="sm" variant="danger" onClick={() => setPendingDelete(config.name)}>
           <Trash2 />
         </Button>
@@ -172,6 +173,7 @@ export function ConfigsPage() {
               <TableHead>名称</TableHead>
               <TableHead>类型</TableHead>
               <TableHead>文件名</TableHead>
+              <TableHead>配置摘要</TableHead>
               <TableHead>当前</TableHead>
               <TableHead className="text-right">操作</TableHead>
             </TableRow>
@@ -182,6 +184,9 @@ export function ConfigsPage() {
                 <TableCell className="font-medium">{config.name}</TableCell>
                 <TableCell className="text-ink-3">{CONFIG_KIND_LABEL[config.kind]}</TableCell>
                 <TableCell className="font-mono text-xs text-ink-3">{config.filename}</TableCell>
+                <TableCell className="text-xs text-ink-3">
+                  {formatSummary(config.summary)}
+                </TableCell>
                 <TableCell>
                   {config.active ? <Badge variant="ok">当前配置</Badge> : <Badge>—</Badge>}
                 </TableCell>
@@ -220,7 +225,7 @@ export function ConfigsPage() {
                   <DropdownMenuItem onSelect={() => setCopySource(config.name)}>
                     复制为手写配置
                   </DropdownMenuItem>
-                  {config.active || config.kind === "subscription-derived" ? null : (
+                  {config.active || config.subscription !== null ? null : (
                     <DropdownMenuItem destructive onSelect={() => setPendingDelete(config.name)}>
                       删除
                     </DropdownMenuItem>
@@ -230,6 +235,9 @@ export function ConfigsPage() {
             </div>
             <p className="mt-1 text-xs text-ink-3">
               {CONFIG_KIND_LABEL[config.kind]} · <span className="font-mono">{config.filename}</span>
+            </p>
+            <p className="mt-1 text-xs text-ink-3">
+              {formatSummary(config.summary)}
             </p>
           </Card>
         ))}

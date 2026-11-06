@@ -9,6 +9,7 @@ the metadata store — no test waits a real interval or sleeps blind.
 """
 
 import asyncio
+import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -208,9 +209,14 @@ async def test_a_subscription_whose_config_is_gone_gets_marked_and_never_stops_s
                 assert patched.status_code == 200
             # Test arrangement (not a seam action): drop the Config
             # registration out from under "orphan" the way external tampering
-            # would; its Subscription row survives. Both Subscriptions are
-            # due from here on, "orphan" listed first.
-            panel.app.state.store.remove_config("orphan")
+            # would; its Subscription row (and its link) survives. The store
+            # itself refuses this, so tampering happens at the SQL layer.
+            conn = sqlite3.connect(panel.data_dir / "clashflow.db")
+            try:
+                conn.execute("DELETE FROM configs WHERE name = 'orphan'")
+                conn.commit()
+            finally:
+                conn.close()
             _arrange_last_refresh(panel, "orphan", timedelta(minutes=2))
             _arrange_last_refresh(panel, "healthy", timedelta(minutes=2))
             orphan_origin.state["body"] = SUB_V2

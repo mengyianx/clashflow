@@ -36,6 +36,7 @@ from typing import Any
 import httpx
 
 from clashflow.apply import (
+    CommitResult,
     HotApplyError,
     KernelRejected,
     RenderedConfigInvalid,
@@ -99,7 +100,7 @@ async def refresh_subscription(
     apply_when_active: bool,
     overlay: Mapping[str, Any],
     user_agent: str | None = None,
-) -> None:
+) -> CommitResult:
     """Fetch a Subscription and store it: the fetched bytes go to the Source
     Config verbatim, the Source + Overlay are rendered into the Runtime
     Config, and the Runtime is hot-applied when this Config is Active and the
@@ -107,9 +108,10 @@ async def refresh_subscription(
     byte-identical; a refused hot-apply restores both pre-refresh states (the
     shared `commit_rendered_config`).
     Pipeline exceptions propagate untouched for the API layer to surface
-    verbatim."""
+    verbatim; the returned result carries the summary for the caller to
+    record (issue #43)."""
     content = await fetch_subscription(client, url, user_agent=user_agent)
-    await commit_rendered_config(
+    result = await commit_rendered_config(
         kernel_bin=kernel.binary,
         data_dir=kernel.data_dir,
         client=client,
@@ -121,6 +123,7 @@ async def refresh_subscription(
         should_reload=lambda: apply_when_active and kernel.alive(),
     )
     log.info("refreshed Subscription-derived Config %s (%d bytes)", target.name, len(content))
+    return result
 
 
 # The failure classes of the refresh pipeline (each its own exception),

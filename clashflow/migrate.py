@@ -39,12 +39,66 @@ BACKUP_DIRNAME = "backup"
 
 type Migration = Callable[[sqlite3.Connection], None]
 
+
+def add_explicit_link_and_summary(conn: sqlite3.Connection) -> None:
+    """Step 2 (issues #41, #43): the Subscription -> Source Config link and
+    the per-Config summary.
+
+    The link is a column, not a convention: every Subscription names the
+    Config it owns, and after this step no code infers ownership from the two
+    names being equal. Existing V1 volumes are backfilled by that same-name
+    convention — the only relationship V1 ever had — and the backfill is an
+    UPDATE that only writes links: no Config row, file or Subscription is
+    removed, so a Config the backfill cannot pair (its Subscription was
+    deleted out of band) stays registered and deletable.
+
+    The summary column stores the counts of the last successful validation as
+    JSON, NULL until a commit reaches the Kernel.
+
+    Idempotent like step 1: a column that already exists is not added again, so
+    a volume whose stored version lags its actual shape (a hand-edited or
+    restored database) still boots instead of failing on a duplicate column.
+    """
+    if "config_name" not in _columns(conn, "subscriptions"):
+        # Deliberately not `REFERENCES configs(name)`: creating a Subscription
+        # writes its row before the Config row exists (the pair is two
+        # statements, Subscription first), so the clause would only be a
+        # landmine the day anything enables `PRAGMA foreign_keys`. The link is
+        # held by the panel's pair rules and the unique index below.
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN config_name TEXT")
+    # Backfill by the only relationship V1 had — equal names — but accept a
+    # Config only if it is the kind V1 gave a Subscription (a leftover
+    # Subscription row must not claim a same-named Hand-written Config: that
+    # would make it undeletable and let the next refresh overwrite it).
+    conn.execute(
+        "UPDATE subscriptions SET config_name = name"
+        " WHERE config_name IS NULL"
+        " AND EXISTS ("
+        "SELECT 1 FROM configs"
+        " WHERE configs.name = subscriptions.name"
+        " AND configs.kind = 'subscription-derived'"
+        ")"
+    )
+    # One Config, one owner: NULL links (a vanished Config) may repeat, a real
+    # link may not.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_config_name ON subscriptions(config_name)"
+    )
+    if "summary" not in _columns(conn, "configs"):
+        conn.execute("ALTER TABLE configs ADD COLUMN summary TEXT")
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
 # Version -> the step that takes a database FROM `version - 1` TO `version`.
 # Step 1 is the V1 schema itself, which `ensure_schema` can also apply to a
 # database that never had a version; later steps append here and are never
 # edited once released (a volume may stop at any version).
 MIGRATIONS: dict[int, Migration] = {
     1: ensure_schema,
+    2: add_explicit_link_and_summary,
 }
 
 
@@ -143,14 +197,10 @@ def backup_volume(data_dir: Path, *, from_version: int) -> Path:
 
 
 def _create_current(db_path: Path) -> None:
-    conn = _connect(db_path)
-    try:
-        conn.execute("BEGIN")
-        ensure_schema(conn)
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
-    finally:
-        conn.close()
+    """A fresh database is built by running the whole chain from version 0:
+    the baseline schema is step 1, so a new volume and a migrated one end up
+    byte-for-byte the same shape (one applier, one history)."""
+    _run_chain(db_path, from_version=0)
 
 
 def _run_chain(db_path: Path, *, from_version: int) -> None:

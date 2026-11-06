@@ -1,5 +1,5 @@
 import { ExternalLink, PenLine, Power, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ErrorBanner, useErrorBanner } from "@/components/ErrorBanner";
@@ -19,6 +19,11 @@ export function OverviewPage() {
   const [subscriptions, setSubscriptions] = useState<SubscriptionEntry[] | null>(null);
   const [busy, setBusy] = useState<"start" | "stop" | "restart" | null>(null);
 
+  // `loaded` separates the first read from the background re-reads: a failure
+  // on the first one belongs in the banner, a failure on a later tick does not
+  // (the banner persists until dismissed, so a single hiccup would sit over a
+  // healthy panel and every tick would re-raise it).
+  const loaded = useRef(false);
   const load = useCallback(async () => {
     try {
       const [nextConfigs, nextSubscriptions] = await Promise.all([
@@ -27,14 +32,19 @@ export function OverviewPage() {
       ]);
       setConfigs(nextConfigs);
       setSubscriptions(nextSubscriptions);
+      loaded.current = true;
     } catch (error) {
-      show(error);
+      if (!loaded.current) show(error);
     }
   }, [show]);
 
+  // The shell polls health every 5 s; the records the overview shows are read
+  // again on that same tick, so a switch made in another tab cannot leave the
+  // card naming a Config the Kernel stopped running. A page never starts its
+  // own timer.
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, health]);
 
   const runServiceAction = async (action: "start" | "stop" | "restart") => {
     setBusy(action);
@@ -50,6 +60,10 @@ export function OverviewPage() {
   };
 
   const activeConfig = configs?.find((config) => config.active) ?? null;
+  // The recorded Active Config (the list) wins over the health string: the
+  // list is re-read on the same 5 s tick as health, so it is never older, and
+  // it carries the summary and the owning Subscription this card shows.
+  const activeName = activeConfig?.name ?? health?.active_config ?? "";
   const failures = subscriptions?.filter((entry) => entry.state === "error").length ?? 0;
   const lastRefresh = subscriptions?.reduce<string | null>((latest, entry) => {
     if (!entry.last_refresh_at) return latest;
@@ -59,7 +73,7 @@ export function OverviewPage() {
 
   const stateLabel = health ? KERNEL_STATE_LABEL[health.state] : "未知";
   const summary = health
-    ? `内核${stateLabel} · 当前配置 ${health.active_config || "—"} · ${subscriptions?.length ?? 0} 份订阅，${failures} 个失败`
+    ? `内核${stateLabel} · 当前配置 ${activeName || "—"} · ${subscriptions?.length ?? 0} 份订阅，${failures} 个失败`
     : "正在读取内核状态…";
 
   return (
@@ -91,7 +105,7 @@ export function OverviewPage() {
               </div>
               <div className="flex justify-between gap-3 py-2.5">
                 <dt className="text-ink-3">当前配置</dt>
-                <dd className="font-mono text-[12.5px]">{health?.active_config || "—"}</dd>
+                <dd className="font-mono text-[12.5px]">{activeName || "—"}</dd>
               </div>
             </dl>
             <div className="mt-auto flex flex-wrap gap-2 pt-4">
@@ -125,7 +139,7 @@ export function OverviewPage() {
             <CardTitle>当前配置</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-1 flex-col">
-            <p className="font-serif text-[26px] leading-none">{health?.active_config || "—"}</p>
+            <p className="font-serif text-[26px] leading-none">{activeName || "—"}</p>
             <dl className="mt-3 divide-y divide-line-soft text-[13.5px]">
               <div className="flex justify-between gap-3 py-2.5">
                 <dt className="text-ink-3">类型</dt>
@@ -137,16 +151,30 @@ export function OverviewPage() {
               </div>
               <div className="flex justify-between gap-3 py-2.5">
                 <dt className="text-ink-3">订阅来源</dt>
+                <dd className="text-ink-3">{activeConfig?.subscription ?? "—"}</dd>
+              </div>
+              <div className="flex justify-between gap-3 py-2.5">
+                <dt className="text-ink-3">配置摘要</dt>
                 <dd className="text-ink-3">
-                  {activeConfig?.kind === "subscription-derived" ? activeConfig.name : "—"}
+                  {activeConfig?.summary
+                    ? `${activeConfig.summary.nodes} 节点 / ${activeConfig.summary.groups} 组 / ${activeConfig.summary.rules} 规则`
+                    : "—"}
                 </dd>
               </div>
+              {activeConfig?.summary?.age_key_missing ? (
+                <div className="flex justify-between gap-3 py-2.5">
+                  <dt className="text-ink-3">Age key</dt>
+                  <dd>
+                    <Badge variant="warn">缺失</Badge>
+                  </dd>
+                </div>
+              ) : null}
             </dl>
             <div className="mt-auto flex flex-wrap gap-2 pt-4">
               <Button
                 variant="primary"
-                disabled={!health?.active_config}
-                onClick={() => navigate(`/configs/${encodeURIComponent(health?.active_config ?? "")}`)}
+                disabled={!activeName}
+                onClick={() => navigate(`/configs/${encodeURIComponent(activeName)}`)}
               >
                 <PenLine />
                 编辑

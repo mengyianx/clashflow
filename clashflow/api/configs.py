@@ -54,10 +54,10 @@ from clashflow.apply import (
 )
 from clashflow.db import (
     DEFAULT_CONFIG_KIND,
-    SUBSCRIPTION_DERIVED_KIND,
     ConfigAlreadyExists,
     ConfigIsActive,
     ConfigNotFound,
+    ConfigOwnedBySubscription,
     config_filename,
     runtime_config_path,
     validate_config_name,
@@ -86,7 +86,7 @@ TEMPLATE_CONFIG_BODY = (
     "mixed-port: 7890\nallow-lan: true\ngeo-auto-update: true\ngeo-update-interval: 24\n"
 )
 
-type ConfigEntry = dict[str, str | bool]
+type ConfigEntry = dict[str, object]
 
 
 class NewConfig(BaseModel):
@@ -119,7 +119,7 @@ async def _commit(
     Kernel's own text, a refused reload is 502 carrying the Controller's."""
     kernel: KernelManager = request.app.state.kernel
     try:
-        await commit_rendered_config(
+        result = await commit_rendered_config(
             kernel_bin=kernel.binary,
             data_dir=kernel.data_dir,
             client=request.app.state.api_client,
@@ -138,6 +138,9 @@ async def _commit(
         HotApplyError,
     ) as exc:
         raise_for_commit_failure(exc)
+    # Issue #43: the summary describes the bytes the Kernel just accepted. It
+    # is written only on success, so a refused save leaves the previous one.
+    request.app.state.store.set_config_summary(name, result.summary.as_dict())
 
 
 @router.post("/api/panel/configs", status_code=201)
@@ -160,12 +163,7 @@ async def create_config(request: Request, body: NewConfig) -> ConfigEntry:
         raise HTTPException(status_code=409, detail=f"config file already exists: {path.name}")
     path.write_text(TEMPLATE_CONFIG_BODY if body.template else EMPTY_CONFIG_BODY)
     log.info("created config %s (%s)", body.name, DEFAULT_CONFIG_KIND)
-    return {
-        "name": body.name,
-        "kind": DEFAULT_CONFIG_KIND,
-        "filename": path.name,
-        "active": False,
-    }
+    return request.app.state.store.get_config(body.name)
 
 
 @router.get("/api/panel/configs")
@@ -365,21 +363,17 @@ async def set_active_config(request: Request, name: str) -> ConfigEntry:
 @router.delete("/api/panel/configs/{name}")
 async def delete_config(request: Request, name: str) -> dict[str, str]:
     try:
-        entry = request.app.state.store.get_config(name)
+        request.app.state.store.get_config(name)
     except ConfigNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    # The pair rule: a Subscription-derived Config is deleted through its
-    # Subscription only, or the Subscription is left orphaned.
-    if entry["kind"] == SUBSCRIPTION_DERIVED_KIND:
-        raise HTTPException(
-            status_code=409,
-            detail=f"config is subscription-derived; delete its subscription instead: {name}",
-        )
     try:
         request.app.state.store.remove_config(name)
     except ConfigNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ConfigIsActive as exc:
+    except (ConfigIsActive, ConfigOwnedBySubscription) as exc:
+        # Issue #41: the pair rule is the explicit link, not the Config's kind
+        # or its name — a Config a Subscription still owns is deleted through
+        # that Subscription, which removes both halves together.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     (_configs_dir(request) / config_filename(name)).unlink(missing_ok=True)
     _runtime_path(request, name).unlink(missing_ok=True)

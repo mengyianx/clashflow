@@ -28,6 +28,8 @@ async def test_creating_config_with_duplicate_name_is_refused(boot_app) -> None:
             "kind": "hand-written",
             "filename": "work.yaml",
             "active": False,
+            "summary": None,
+            "subscription": None,
         }
         # Empty Config semantics: the registered file is the YAML empty
         # mapping, which the pinned Kernel loads as a defaults-only config
@@ -57,6 +59,8 @@ async def test_config_list_shows_every_config_and_marks_the_active_one(boot_app)
             "kind": "hand-written",
             "filename": "a.yaml",
             "active": True,
+            "summary": {"nodes": 0, "groups": 0, "rules": 0, "age_key_missing": False},
+            "subscription": None,
         }
 
         configs = (await panel.client.get("/api/panel/configs")).json()
@@ -70,6 +74,8 @@ async def test_config_list_shows_every_config_and_marks_the_active_one(boot_app)
             "kind": "hand-written",
             "filename": "b.yaml",
             "active": False,
+            "summary": None,
+            "subscription": None,
         }
 
         # An unregistered name cannot become Active.

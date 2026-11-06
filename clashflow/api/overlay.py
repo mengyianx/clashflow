@@ -80,7 +80,7 @@ async def _apply(request: Request, values: dict[str, Any]) -> dict[str, object]:
     if active is not None:
         kernel: KernelManager = request.app.state.kernel
         try:
-            await commit_rendered_config(
+            result = await commit_rendered_config(
                 kernel_bin=kernel.binary,
                 data_dir=kernel.data_dir,
                 client=request.app.state.api_client,
@@ -99,6 +99,10 @@ async def _apply(request: Request, values: dict[str, Any]) -> dict[str, object]:
             HotApplyError,
         ) as exc:
             raise_for_commit_failure(exc)
+        # Issue #43: the re-rendered Active Config is what the Kernel runs, so
+        # its summary is refreshed too (the Overlay does not change counts
+        # today, but a future stage may).
+        store.set_config_summary(active, result.summary.as_dict())
     store.set_overlay(canonical)
     log.info("saved overlay (%d owned keys)", len(canonical))
     return _state(request)

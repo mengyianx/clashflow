@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/table";
 import { api, type SubscriptionEntry } from "@/lib/api";
 import { SUBSCRIPTION_FAILURE_CLASS_LABEL, SUBSCRIPTION_STATE_LABEL } from "@/lib/messages";
-import { formatTimestamp } from "@/lib/utils";
+import { formatSummary, formatTimestamp } from "@/lib/utils";
 
 interface Draft {
   userAgent: string;
@@ -199,6 +199,7 @@ export function SubscriptionsPage() {
             <TableRow>
               <TableHead>名称</TableHead>
               <TableHead>状态</TableHead>
+              <TableHead>配置摘要</TableHead>
               <TableHead>上次刷新</TableHead>
               <TableHead>User-Agent</TableHead>
               <TableHead>间隔（分钟）</TableHead>
@@ -221,6 +222,9 @@ export function SubscriptionsPage() {
                       {SUBSCRIPTION_STATE_LABEL[entry.state]}
                     </Badge>
                     {failureLine(entry)}
+                  </TableCell>
+                  <TableCell className="text-xs text-ink-3 whitespace-nowrap">
+                    {formatSummary(entry.summary)}
                   </TableCell>
                   <TableCell className="text-ink-3 whitespace-nowrap">
                     {formatTimestamp(entry.last_refresh_at)}
@@ -301,7 +305,7 @@ export function SubscriptionsPage() {
             </div>
             <p className="mt-1 font-mono text-[11.5px] break-all text-ink-3">{entry.url}</p>
             <p className="mt-1 text-xs text-ink-3">
-              上次刷新 {formatTimestamp(entry.last_refresh_at)} · 间隔{" "}
+              {formatSummary(entry.summary)} · 上次刷新 {formatTimestamp(entry.last_refresh_at)} · 间隔{" "}
               {entry.update_interval_minutes === null ? "默认" : `${entry.update_interval_minutes} 分钟`}
             </p>
             {failureLine(entry)}

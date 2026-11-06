@@ -9,6 +9,7 @@ current.
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -48,9 +49,10 @@ CREATE TABLE IF NOT EXISTS overlay (
     data TEXT NOT NULL
 )
 """,
-    # One row per Subscription (ticket #12). The name is both the Subscription
-    # identity and its Subscription-derived Config's name (plan §3); plain
-    # columns keep the table ALTER-TABLE-extensible.
+    # One row per Subscription (ticket #12). The name is the Subscription
+    # identity; the Subscription-derived Config it owns is linked through
+    # `config_name` (migration step 2, issue #41) — never inferred from the
+    # name being equal. Plain columns keep the table ALTER-TABLE-extensible.
     """
 CREATE TABLE IF NOT EXISTS subscriptions (
     name TEXT PRIMARY KEY,
@@ -65,7 +67,11 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 # The schema version this image writes and understands (`PRAGMA user_version`,
 # ADR-0006). A volume stamped higher was written by a newer image and refuses
 # to start; a lower one is backed up and migrated (clashflow.migrate).
-SCHEMA_VERSION = 1
+# v2: `subscriptions.config_name` makes the Subscription -> Source Config
+# relationship explicit (issue #41) and `configs.summary` stores the last
+# successful validation's counts (issue #43). Both are added by migration
+# step 2; nothing below reads a column step 2 did not create.
+SCHEMA_VERSION = 2
 
 # Additive schema for `subscriptions` (ticket #13), applied with
 # ALTER TABLE ... ADD COLUMN after the base schema. NULL is the documented
@@ -123,6 +129,20 @@ class ConfigIsActive(ConfigError):
     def __init__(self, name: str) -> None:
         super().__init__(f"config is active; activate another config before deleting: {name}")
         self.name = name
+
+
+class ConfigOwnedBySubscription(ConfigError):
+    """A Subscription still links to this Config; deleting the Config would
+    leave the Subscription without its source, so the Subscription is the only
+    way to delete the pair."""
+
+    def __init__(self, name: str, subscription: str) -> None:
+        super().__init__(
+            f"config is the source of subscription {subscription}; "
+            f"delete that subscription instead: {name}"
+        )
+        self.name = name
+        self.subscription = subscription
 
 
 class SubscriptionAlreadyExists(ConfigError):
@@ -192,22 +212,17 @@ class MetadataStore:
             raise ConfigAlreadyExists(name) from exc
         self._conn.commit()
 
-    def get_config(self, name: str) -> dict[str, str | bool]:
+    def get_config(self, name: str) -> dict[str, object]:
         row = self._conn.execute(
-            "SELECT c.name, c.kind, c.name = a.name AS active"
-            " FROM configs c LEFT JOIN active_config a ON a.id = 1 WHERE c.name = ?",
+            _SELECT_CONFIG + " WHERE c.name = ?",
             (name,),
         ).fetchone()
         if row is None:
             raise ConfigNotFound(name)
         return _entry(row)
 
-    def list_configs(self) -> list[dict[str, str | bool]]:
-        rows = self._conn.execute(
-            "SELECT c.name, c.kind, c.name = a.name AS active"
-            " FROM configs c LEFT JOIN active_config a ON a.id = 1"
-            " ORDER BY c.created_at, c.name"
-        ).fetchall()
+    def list_configs(self) -> list[dict[str, object]]:
+        rows = self._conn.execute(_SELECT_CONFIG + " ORDER BY c.created_at, c.name").fetchall()
         return [_entry(row) for row in rows]
 
     def activate_config(self, name: str) -> None:
@@ -216,10 +231,36 @@ class MetadataStore:
         self.set_active(name)
 
     def remove_config(self, name: str) -> None:
-        """Drop a registered Config; the Active Config and unknown names are refused."""
+        """Drop a registered Config; the Active Config, a Config a Subscription
+        still links to, and unknown names are refused. A Subscription is the
+        only way to delete the pair (issue #41: the link decides, not the
+        kind or the name)."""
         if self.get_active() == name:
             raise ConfigIsActive(name)
+        subscription = self.subscription_for_config(name)
+        if subscription is not None:
+            raise ConfigOwnedBySubscription(name, subscription)
         cursor = self._conn.execute("DELETE FROM configs WHERE name = ?", (name,))
+        if cursor.rowcount == 0:
+            raise ConfigNotFound(name)
+        self._conn.commit()
+
+    def subscription_for_config(self, name: str) -> str | None:
+        """The Subscription that links to this Config, if any (the explicit
+        link, issue #41)."""
+        row = self._conn.execute(
+            "SELECT name FROM subscriptions WHERE config_name = ?", (name,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_config_summary(self, name: str, summary: Mapping[str, object]) -> None:
+        """Record what the RENDERED Config contains (issue #43). Only a commit
+        that reached the Kernel writes here, so a refused save leaves the
+        previous summary in place."""
+        cursor = self._conn.execute(
+            "UPDATE configs SET summary = ? WHERE name = ?",
+            (json.dumps(summary, ensure_ascii=False), name),
+        )
         if cursor.rowcount == 0:
             raise ConfigNotFound(name)
         self._conn.commit()
@@ -240,27 +281,38 @@ class MetadataStore:
         self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
         self._conn.commit()
 
-    def create_subscription(self, name: str, url: str) -> None:
-        """Register a new Subscription; duplicate names are refused. The name
-        doubles as the Subscription-derived Config's name (plan §3)."""
+    def create_subscription(self, name: str, url: str, config_name: str) -> None:
+        """Register a new Subscription together with the link to the Source
+        Config it owns (issue #41). The link is written in the same INSERT as
+        the Subscription, so a Subscription row never exists without one; the
+        Config row itself is created by the caller right after (the pair is two
+        statements — see `clashflow.migrate`, which therefore declares no
+        foreign key). `config_name` is validated like `name` because it becomes
+        a filename."""
         validate_config_name(name)
+        validate_config_name(config_name)
         try:
-            self._conn.execute("INSERT INTO subscriptions (name, url) VALUES (?, ?)", (name, url))
+            self._conn.execute(
+                "INSERT INTO subscriptions (name, url, config_name) VALUES (?, ?, ?)",
+                (name, url, config_name),
+            )
         except sqlite3.IntegrityError as exc:
             raise SubscriptionAlreadyExists(name) from exc
         self._conn.commit()
 
-    def get_subscription(self, name: str) -> dict[str, str | int | None]:
+    def get_subscription(self, name: str) -> dict[str, object]:
         row = self._conn.execute(
-            _SELECT_SUBSCRIPTION + " WHERE name = ?",
+            _SELECT_SUBSCRIPTION + " WHERE s.name = ?",
             (name,),
         ).fetchone()
         if row is None:
             raise SubscriptionNotFound(name)
         return _subscription_entry(row)
 
-    def list_subscriptions(self) -> list[dict[str, str | int | None]]:
-        rows = self._conn.execute(_SELECT_SUBSCRIPTION + " ORDER BY created_at, name").fetchall()
+    def list_subscriptions(self) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            _SELECT_SUBSCRIPTION + " ORDER BY s.created_at, s.name"
+        ).fetchall()
         return [_subscription_entry(row) for row in rows]
 
     def set_subscription_fetch_settings(
@@ -320,15 +372,39 @@ class MetadataStore:
         self._conn.close()
 
 
+_SELECT_CONFIG = (
+    # `subscription` is the explicit link read back (issue #41): a Config's
+    # owner is the row that names it, never a name match.
+    "SELECT c.name, c.kind, c.name = a.name AS active, c.summary, s.name AS subscription"
+    " FROM configs c"
+    " LEFT JOIN active_config a ON a.id = 1"
+    " LEFT JOIN subscriptions s ON s.config_name = c.name"
+)
+
 _SELECT_SUBSCRIPTION = (
-    "SELECT name, url, last_refresh_at, last_error, user_agent, update_interval_minutes,"
-    " last_error_class FROM subscriptions"
+    # The subscription plus the summary of the Source Config it links to (the
+    # panel shows the owned Config's contents in the Subscriptions view).
+    # Columns are qualified because the join brings in a second `created_at`.
+    "SELECT s.name, s.url, s.last_refresh_at, s.last_error, s.user_agent,"
+    " s.update_interval_minutes, s.last_error_class, s.config_name, c.summary"
+    " FROM subscriptions s LEFT JOIN configs c ON c.name = s.config_name"
 )
 
 
-def _entry(row: tuple[str, str, int]) -> dict[str, str | bool]:
-    name, kind, active = row
-    return {"name": name, "kind": kind, "filename": config_filename(name), "active": bool(active)}
+def _entry(row: tuple[str, str, int, str | None, str | None]) -> dict[str, object]:
+    name, kind, active, summary, subscription = row
+    return {
+        "name": name,
+        "kind": kind,
+        "filename": config_filename(name),
+        "active": bool(active),
+        # Issue #43: the counts from the last successful validation; None
+        # until a commit reaches the Kernel (a migrated record, or one whose
+        # last save was refused).
+        "summary": json.loads(summary) if summary is not None else None,
+        # Issue #41: the Subscription that owns this Source Config, or None.
+        "subscription": subscription,
+    }
 
 
 def _utc_now() -> str:
@@ -336,8 +412,10 @@ def _utc_now() -> str:
 
 
 def _subscription_entry(
-    row: tuple[str, str, str | None, str | None, str | None, int | None, str | None],
-) -> dict[str, str | int | None]:
+    row: tuple[
+        str, str, str | None, str | None, str | None, int | None, str | None, str | None, str | None
+    ],
+) -> dict[str, object]:
     (
         name,
         url,
@@ -346,6 +424,8 @@ def _subscription_entry(
         user_agent,
         update_interval_minutes,
         last_error_class,
+        config_name,
+        summary,
     ) = row
     # State is derived, never stored: a failure shows until the next success;
     # a never-refreshed Subscription is "pending", not "ok".
@@ -358,7 +438,12 @@ def _subscription_entry(
     return {
         "name": name,
         "url": url,
-        "config": config_filename(name),
+        # The explicit Subscription -> Source Config link (issue #41): the
+        # registered Config name and its server-assigned filename. NULL only
+        # for a legacy record whose same-name Config had already vanished
+        # before migration — the pair rule holds for every creatable record.
+        "config_name": config_name,
+        "config": config_filename(config_name) if config_name is not None else None,
         "state": state,
         "last_refresh_at": last_refresh_at,
         "last_error": last_error,
@@ -370,4 +455,7 @@ def _subscription_entry(
         # fallback (module default UA; global default interval for #16).
         "user_agent": user_agent,
         "update_interval_minutes": update_interval_minutes,
+        # Issue #43: the linked Config's summary, so the Subscriptions view can
+        # show what the Subscription currently delivers without a second call.
+        "summary": json.loads(summary) if summary is not None else None,
     }

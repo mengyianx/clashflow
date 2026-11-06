@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from clashflow.db import SCHEMA_VERSION
+from clashflow.db import SCHEMA_VERSION, ensure_schema
 from clashflow.migrate import MigrationBackupFailed, SchemaTooNew
 
 V1_SCHEMA = """
@@ -199,3 +199,34 @@ async def test_a_fresh_volume_is_created_at_the_current_version_without_a_backup
     assert _version(data / "clashflow.db") == SCHEMA_VERSION
     # Nothing to preserve on a volume that never held user data.
     assert not (data / "backup").exists()
+
+
+async def test_a_volume_whose_stored_version_lags_its_actual_shape_still_boots(
+    boot_app, tmp_path
+) -> None:
+    # A hand-edited or half-restored database can carry a column a later
+    # migration would add while still stamping an older version. Step 2 is
+    # idempotent (PRAGMA table_info guard), so the boot repairs the link and
+    # the version instead of dying on "duplicate column name".
+    data = tmp_path / "volume"
+    _seed_v1_volume(data)
+    conn = sqlite3.connect(data / "clashflow.db")
+    try:
+        # A v1 volume written by the shipped image: it carries everything
+        # `ensure_schema` (step 1) adds, plus, out of band, the v2 columns.
+        ensure_schema(conn)
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN config_name TEXT")
+        conn.execute("ALTER TABLE configs ADD COLUMN summary TEXT")
+        conn.execute("INSERT INTO configs (name, kind) VALUES ('prov', 'subscription-derived')")
+        conn.execute(
+            "INSERT INTO subscriptions (name, url) VALUES ('prov', 'http://127.0.0.1:1/sub')"
+        )
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+    finally:
+        conn.close()
+
+    async with boot_app(data_dir=data) as panel:
+        assert (await panel.client.get("/api/service/health")).json()["kernel"] == "up"
+        entry = (await panel.client.get("/api/panel/subscriptions")).json()[0]
+        assert entry["config_name"] == "prov"

@@ -42,7 +42,7 @@ _中文_: 订阅转换
 _Avoid_: sub conversion, link parsing
 
 **Source Config**:
-A mihomo YAML owned by the user and edited in the Management Panel; a Subscription refresh rewrites exactly one Source Config verbatim.
+A mihomo YAML owned by the user and edited in the Management Panel; a Subscription refresh rewrites exactly one Source Config verbatim. The Subscription that owns it is recorded as an explicit link (`subscriptions.config_name`), never inferred from the two names being equal.
 _中文_: 源配置
 _Avoid_: profile, user config, config
 
@@ -55,6 +55,11 @@ _Avoid_: effective config, generated config, final config
 The single panel-owned set of settings applied over every Source Config at render time — gateway concerns (TUN Mode, DNS, ports, log level) and the override modules — whose keys win over the Source Config's.
 _中文_: 网关覆盖
 _Avoid_: override, overwrite layer, merge layer
+
+**Config Summary**:
+The node, proxy-group and rule counts of a Config's rendered bytes, plus whether the Config needs an Age key the panel does not hold; recorded only after a validation the Kernel accepted, so a refused save leaves the previous one in place.
+_中文_: 配置摘要
+_Avoid_: stats, statistics
 
 **Active Config**:
 The Source Config whose Runtime Config the Kernel is currently running.

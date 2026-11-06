@@ -43,6 +43,8 @@ async def test_saving_valid_edit_to_active_config_hot_applies_without_restart(bo
             "kind": "hand-written",
             "filename": "default.yaml",
             "active": True,
+            "summary": {"nodes": 1, "groups": 0, "rules": 0, "age_key_missing": False},
+            "subscription": None,
         }
 
         # The save hot-applied instead of restarting: same Kernel process...
@@ -359,6 +361,8 @@ async def test_switching_active_config_hot_applies_and_records_without_restart(b
             "kind": "hand-written",
             "filename": "alt.yaml",
             "active": True,
+            "summary": {"nodes": 1, "groups": 0, "rules": 0, "age_key_missing": False},
+            "subscription": None,
         }
         # Recorded AND hot-applied in the same process: no restart happened.
         assert panel.app.state.kernel.pid == pid_before
