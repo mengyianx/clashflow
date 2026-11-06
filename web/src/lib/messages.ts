@@ -54,7 +54,8 @@ const KNOWN_MESSAGES: Array<[prefix: string, title: string]> = [
   ["user agent must not contain control characters", "User-Agent 含控制字符"],
   ["update interval must be a positive number of minutes", "更新间隔必须是不小于 1 的整数分钟"],
   ["kernel unreachable", "内核没有响应"],
-  ["endpoint not exposed by the Management Panel", "该接口未开放"],
+  // The refused Controller endpoints are not listed here: they answer 403,
+  // and STATUS_TITLES[403] is their one Chinese title.
   ["release check failed", "检查更新失败"],
   ["download failed", "下载失败"],
   ["bundle has no index.html", "更新包不含入口页面"],
