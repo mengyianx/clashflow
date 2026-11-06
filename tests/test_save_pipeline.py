@@ -192,6 +192,40 @@ async def test_saving_the_active_config_with_a_refused_hot_apply_restores_the_pr
         assert health["kernel"] == "up"
 
 
+async def test_a_refused_hot_apply_leaves_an_absent_config_file_absent_again(
+    boot_app, monkeypatch
+) -> None:
+    # The Config's file can be gone when the save lands (deleted out of band).
+    # The rule still holds: a refused write leaves the previous state, and the
+    # previous state here was "no file at all" — so the refused bytes must not
+    # stay behind either.
+    async with boot_app() as panel:
+        secret = panel.app.state.secret
+        pid_before = panel.app.state.kernel.pid
+        target = panel.data_dir / "configs" / "default.yaml"
+
+        async def forced_hot_apply_failure(*args, **kwargs):
+            raise HotApplyError("forced hot-apply failure")
+
+        monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
+
+        # The file is gone before the save: there are no pre-save bytes.
+        target.unlink()
+        resp = await panel.client.put(
+            "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+        )
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "forced hot-apply failure"
+
+        # Absent restores as absent: the refused bytes are not left on disk.
+        assert not target.exists()
+        assert list(target.parent.glob("*.tmp")) == []
+
+        # The Kernel keeps running the old Config, same process.
+        assert panel.app.state.kernel.pid == pid_before
+        assert (await _controller_configs(secret))["mixed-port"] == 7890
+
+
 async def test_the_refusal_answer_carries_the_controller_text_verbatim(
     boot_app, monkeypatch
 ) -> None:

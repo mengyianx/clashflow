@@ -3,9 +3,10 @@ forced hot-apply through the Controller. Shared by the save endpoint, Active
 Config switching, and (per the plan) the Subscription refresh pipeline.
 
 A refused hot-apply leaves the Kernel on the previous Config, so the write
-paths put the pre-write bytes back on disk (`hot_apply_or_restore`): disk and
+paths put the pre-write state back on disk (`hot_apply_or_restore`): disk and
 the running state stay consistent, and the next Kernel restart does not boot
-bytes the Controller refused.
+bytes the Controller refused. The pre-write state is the file's bytes, or its
+absence when the file was gone before the write — absent restores as absent.
 
 Pinned Kernel (v1.19.32) facts this module encodes:
 - `mihomo -d <home> -t -f <file>` exits 0 = valid, 1 = invalid; the error
@@ -54,6 +55,18 @@ class ConfigFileMissing(Exception):
 class HotApplyError(Exception):
     """The Controller refused or never received the forced reload; the message
     carries the upstream error text verbatim when one was returned."""
+
+
+class Unwritten:
+    """The marker for "the caller wrote nothing to the Config file".
+
+    The Active Config switch only asks the Kernel to load a Config that is
+    already on disk: it writes no bytes, so a refused hot-apply has nothing
+    to restore and the file stays exactly as it is.
+    """
+
+
+UNWRITTEN = Unwritten()
 
 
 async def validate_config(kernel_bin: str, data_dir: Path, config_file: Path) -> None:
@@ -110,16 +123,25 @@ async def hot_apply(client: httpx.AsyncClient, secret: str, config_path: Path) -
 
 
 async def hot_apply_or_restore(
-    client: httpx.AsyncClient, secret: str, config_path: Path, previous: bytes | None
+    client: httpx.AsyncClient,
+    secret: str,
+    config_path: Path,
+    previous: bytes | None | Unwritten = UNWRITTEN,
 ) -> None:
-    """Forced config reload through the Controller, with the pre-write bytes
+    """Forced config reload through the Controller, with the pre-write state
     put back when the Controller refuses it.
 
     A refusal means the Kernel never left the old Config, so the stored file
-    must not keep the refused bytes either: `previous` (the bytes the file
-    carried before the write) goes back on disk and the refusal is re-raised
-    for the caller to surface verbatim. `previous` is None when the file did
-    not exist before the write — there are no bytes to put back then.
+    must not keep the refused bytes either: the pre-write state goes back on
+    disk and the refusal is re-raised for the caller to surface verbatim.
+
+    `previous` is that pre-write state:
+    - the bytes the file carried: a refusal puts them back;
+    - None: the file was absent before the write — there are no bytes to put
+      back then, and absent restores as absent: the refused bytes are
+      removed, so the file is gone again;
+    - UNWRITTEN (the default): the caller wrote nothing (the Active Config
+      switch), so a refusal leaves the file exactly as it is.
 
     Both write paths use this one implementation: the save endpoint and the
     Subscription refresh. In both the Kernel keeps running the previous
@@ -128,7 +150,12 @@ async def hot_apply_or_restore(
     try:
         await hot_apply(client, secret, config_path)
     except HotApplyError:
-        if previous is not None:
+        if isinstance(previous, Unwritten):
+            log.info("nothing was written to %s; left as it is", config_path.name)
+        elif previous is None:
+            config_path.unlink(missing_ok=True)
+            log.info("removed the refused Config bytes on %s (it was absent)", config_path.name)
+        else:
             config_path.write_bytes(previous)
             log.info("restored the previous Config bytes on %s", config_path.name)
         raise

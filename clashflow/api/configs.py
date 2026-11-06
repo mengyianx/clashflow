@@ -14,9 +14,10 @@ file is refused by the Kernel ("configuration file … is empty").
 Save semantics: validate (`mihomo -t`) → atomic swap → hot-apply when the
 Config is the Active one. A Kernel rejection answers 400 with the Kernel's
 own output and leaves the stored file untouched; a refused hot-apply answers
-502 with the Controller's refusal text and puts the pre-save bytes back, so
-the stored Config stays the one the Kernel keeps running (the same restore
-the Subscription refresh uses).
+502 with the Controller's refusal text and puts the pre-save state back — the
+pre-save bytes, or absence when the file was gone (absent restores as absent)
+— so the stored Config stays the one the Kernel keeps running (the same
+restore the Subscription refresh uses).
 
 Blank template semantics (ticket #11): `POST` with `template: true` writes
 the minimal skeleton (`mixed-port: 7890`, `allow-lan: true`, plus the GEO
@@ -33,9 +34,11 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from clashflow.apply import (
+    UNWRITTEN,
     ConfigFileMissing,
     HotApplyError,
     KernelRejected,
+    Unwritten,
     atomic_save,
     hot_apply_or_restore,
     validate_config,
@@ -236,14 +239,16 @@ async def set_active_config(request: Request, name: str) -> ConfigEntry:
     return store.get_config(name)
 
 
-async def _hot_apply_or_502(request: Request, target: Path, previous: bytes | None = None) -> None:
+async def _hot_apply_or_502(
+    request: Request, target: Path, previous: bytes | None | Unwritten = UNWRITTEN
+) -> None:
     """Hot-apply the Config; a Controller refusal answers 502 with the
     Controller's own text, verbatim.
 
-    `previous` are the bytes the file carried before the caller wrote it: a
-    refusal puts them back, so the stored Config stays byte-identical to the
-    one the Kernel keeps running. The Active Config switch writes nothing, so
-    it passes none and leaves the file alone.
+    `previous` is the state the Config file carried before this call wrote
+    it: its bytes, or None when the file was absent (absent restores as
+    absent). The Active Config switch writes nothing, so it hot-applies with
+    UNWRITTEN and a refusal leaves the file exactly as it is.
     """
     try:
         await hot_apply_or_restore(
