@@ -6,6 +6,7 @@ through its Controller API and through real proxy traffic.
 """
 
 import asyncio
+import os
 import re
 import subprocess
 
@@ -224,6 +225,39 @@ async def test_a_refused_hot_apply_leaves_an_absent_config_file_absent_again(
         # The Kernel keeps running the old Config, same process.
         assert panel.app.state.kernel.pid == pid_before
         assert (await _controller_configs(secret))["mixed-port"] == 7890
+
+
+async def test_a_refused_hot_apply_restores_the_config_by_replacing_the_file(
+    boot_app, monkeypatch
+) -> None:
+    # The restore swaps the file the way every other Config write does: the
+    # file that comes back is not the file the refusal found — a reader that
+    # opened the Config before the save keeps reading the whole old Config,
+    # never a half-written one.
+    async with boot_app() as panel:
+        target = panel.data_dir / "configs" / "default.yaml"
+        before = target.read_bytes()
+        refused_inode: list[int] = []
+
+        async def forced_hot_apply_failure(*args, **kwargs):
+            # The moment of the refusal: the file holds the refused bytes.
+            refused_inode.append(os.stat(target).st_ino)
+            raise HotApplyError("forced hot-apply failure")
+
+        monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
+        # A reader holding the Config file open across the refused save.
+        with target.open("rb") as reader:
+            resp = await panel.client.put(
+                "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+            )
+            assert resp.status_code == 502
+
+            # The restore replaced the file instead of rewriting it in place.
+            assert os.stat(target).st_ino != refused_inode[0]
+            # The reader still sees the complete previous Config.
+            assert reader.read() == before
+            assert target.read_bytes() == before
+            assert list(target.parent.glob("*.tmp")) == []
 
 
 async def test_the_refusal_answer_carries_the_controller_text_verbatim(
