@@ -1,6 +1,8 @@
 """Reusable Config apply pipeline: `mihomo -t` validation, atomic swap, and
-forced hot-apply through the Controller. Shared by the save endpoint, Active
-Config switching, and (per the plan) the Subscription refresh pipeline.
+forced hot-apply through the Controller. Every Config write enters through
+`commit_config`, which restores through `hot_apply_or_restore`: the save
+endpoint, the Active Config switch, the Subscription refresh, and the copy
+that only stores bytes.
 
 A refused hot-apply leaves the Kernel on the previous Config, so the write
 paths put the pre-write state back on disk (`hot_apply_or_restore`): disk and
@@ -22,6 +24,7 @@ Pinned Kernel (v1.19.32) facts this module encodes:
 import asyncio
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -173,6 +176,49 @@ async def hot_apply_or_restore(
             _restore_bytes(config_path, previous)
             log.info("restored the previous Config bytes on %s", config_path.name)
         raise
+
+
+async def commit_config(
+    *,
+    kernel_bin: str,
+    data_dir: Path,
+    client: httpx.AsyncClient,
+    secret: str,
+    target: Path,
+    content: bytes | Unwritten,
+    should_reload: Callable[[], bool] | None,
+) -> None:
+    """The one path every Config change takes: validate, write, reload, restore.
+
+    `content` is the candidate body. It is validated on a sibling temp file
+    and only then swapped in, so a rejected candidate leaves the target
+    byte-identical. `content=UNWRITTEN` means the caller wrote nothing — the
+    Active Config switch loads a file that is already on disk — so the file is
+    validated as it stands and a refused reload leaves it alone.
+
+    `should_reload` is asked at the moment of the reload, not when the request
+    arrived: validation can take seconds (the config-test may download GEO
+    data), and a Kernel that died inside that window must not be asked to
+    serve a Config it cannot. It answers false for a Config that is not
+    Active, for a caller that only stores bytes (`None`), and for a Kernel
+    that is down — the bytes are stored and the next start picks them up.
+
+    Failures propagate as their own classes — `KernelRejected`,
+    `ConfigFileMissing`, `HotApplyError` — so each caller maps them onto its
+    own surface (HTTP status, Failure Class) without re-implementing the
+    restore rules.
+    """
+    previous: bytes | None | Unwritten = UNWRITTEN
+    if isinstance(content, Unwritten):
+        await validate_config(kernel_bin, data_dir, target)
+    else:
+        # The pre-write bytes, read BEFORE the swap: a refused hot-apply puts
+        # them back, so the stored Config stays the one the Kernel keeps
+        # running.
+        previous = target.read_bytes() if target.is_file() else None
+        await atomic_save(kernel_bin, data_dir, target, content)
+    if should_reload is not None and should_reload():
+        await hot_apply_or_restore(client, secret, target, previous)
 
 
 def _upstream_message(resp: httpx.Response) -> str:
