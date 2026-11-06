@@ -136,7 +136,7 @@ export function ConfigsPage() {
         <Copy />
         复制
       </Button>
-      {config.active || config.kind === "subscription-derived" ? null : (
+      {config.active || config.subscription !== null ? null : (
         <Button size="sm" variant="danger" onClick={() => setPendingDelete(config.name)}>
           <Trash2 />
         </Button>
@@ -225,7 +225,7 @@ export function ConfigsPage() {
                   <DropdownMenuItem onSelect={() => setCopySource(config.name)}>
                     复制为手写配置
                   </DropdownMenuItem>
-                  {config.active || config.kind === "subscription-derived" ? null : (
+                  {config.active || config.subscription !== null ? null : (
                     <DropdownMenuItem destructive onSelect={() => setPendingDelete(config.name)}>
                       删除
                     </DropdownMenuItem>

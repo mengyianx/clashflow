@@ -139,21 +139,30 @@ async def test_every_read_and_write_follows_the_link_not_the_name(boot_app) -> N
             assert resp.status_code == 200
             assert not (configs_dir / "shared.yaml").exists()
             assert (configs_dir / "prov.yaml").read_bytes() == SUB_ONE
+            # `prov` is now a Subscription-derived Config nobody owns. Deleting
+            # it directly must succeed: the rule reads the link, not the kind.
+            assert by_name["prov"]["kind"] == "subscription-derived"
+            assert (await panel.client.delete("/api/panel/configs/prov")).status_code == 200
+            assert not (configs_dir / "prov.yaml").exists()
+
             names = {
                 config["name"] for config in (await panel.client.get("/api/panel/configs")).json()
             }
-            assert {"default", "prov"} == names
+            assert {"default"} == names
             assert (await panel.client.get("/api/panel/subscriptions")).json() == []
 
 
 def _seed_v1_volume(data: Path) -> None:
     """A V1 volume: the pair created by the same-name convention, one Config
-    with no Subscription at all, and one Subscription whose Config had already
-    vanished."""
+    with no Subscription at all, one Subscription whose Config had already
+    vanished, and one same-name pair the panel could never have produced (a
+    leftover Subscription row next to a Hand-written Config): the shapes a
+    hand-edited or half-restored volume holds."""
     (data / "configs").mkdir(parents=True)
     (data / "configs" / "default.yaml").write_text("mixed-port: 7890\nallow-lan: true\n")
     (data / "configs" / "prov.yaml").write_text(SUB_ONE.decode())
     (data / "configs" / "spare.yaml").write_text("mixed-port: 7891\nallow-lan: true\n")
+    (data / "configs" / "draft.yaml").write_text("mixed-port: 7892\nallow-lan: true\n")
     conn = sqlite3.connect(data / "clashflow.db")
     try:
         conn.executescript(V1_SCHEMA)
@@ -163,12 +172,17 @@ def _seed_v1_volume(data: Path) -> None:
                 ("default", "hand-written"),
                 ("prov", "subscription-derived"),
                 ("spare", "hand-written"),
+                ("draft", "hand-written"),
             ],
         )
         conn.execute("INSERT INTO active_config (id, name) VALUES (1, 'default')")
         conn.executemany(
             "INSERT INTO subscriptions (name, url) VALUES (?, ?)",
-            [("prov", "http://127.0.0.1:1/subscription"), ("ghost", "http://127.0.0.1:1/ghost")],
+            [
+                ("prov", "http://127.0.0.1:1/subscription"),
+                ("ghost", "http://127.0.0.1:1/ghost"),
+                ("draft", "http://127.0.0.1:1/draft"),
+            ],
         )
         conn.commit()
     finally:
@@ -190,28 +204,41 @@ async def test_migration_backfills_the_link_and_keeps_every_config(boot_app, tmp
         # …a Subscription with no Config stays unlinked instead of guessing…
         assert entries["ghost"]["config_name"] is None
         assert entries["ghost"]["config"] is None
+        # …a same-named Hand-written Config is NOT claimed by a leftover
+        # Subscription row (only the kind a Subscription produces is backfilled)…
+        assert entries["draft"]["config_name"] is None
+        assert entries["draft"]["config"] is None
         # …and no Config is lost: the owned, the spare and the boot Config all
         # survive with their files.
         configs = {
             config["name"]: config
             for config in (await panel.client.get("/api/panel/configs")).json()
         }
-        assert set(configs) == {"default", "prov", "spare"}
+        assert set(configs) == {"default", "draft", "prov", "spare"}
         assert configs["prov"]["subscription"] == "prov"
         assert configs["spare"]["subscription"] is None
+        assert configs["draft"]["subscription"] is None
         assert (data / "configs" / "prov.yaml").read_bytes() == SUB_ONE
         assert (data / "configs" / "spare.yaml").read_bytes() == (
             b"mixed-port: 7891\nallow-lan: true\n"
+        )
+        assert (data / "configs" / "draft.yaml").read_bytes() == (
+            b"mixed-port: 7892\nallow-lan: true\n"
         )
 
         # The unlinked Subscription has no source to refresh: 404, no guess.
         resp = await panel.client.post("/api/panel/subscriptions/ghost/refresh")
         assert resp.status_code == 404
         assert "no source config" in resp.json()["detail"]
+        assert (
+            await panel.client.post("/api/panel/subscriptions/draft/refresh")
+        ).status_code == 404
 
         # The link is the only relationship: the spare Config (kind
-        # hand-written, no Subscription) is deletable, the owned one is not.
+        # hand-written, no Subscription) is deletable, the unclaimed
+        # hand-written one keeps its file, and the owned one is not.
         assert (await panel.client.delete("/api/panel/configs/spare")).status_code == 200
+        assert (await panel.client.delete("/api/panel/configs/draft")).status_code == 200
         resp = await panel.client.delete("/api/panel/configs/prov")
         assert resp.status_code == 409
         assert "subscription prov" in resp.json()["detail"]

@@ -115,18 +115,21 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
         _validate_url(body.url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    target = configs_dir / config_filename(body.name)
+    # The panel chooses the new Config's name here; the record keeps it in the
+    # explicit link (`config_name`), which every later read uses. From this
+    # line on the two names travel as separate values — nothing below derives
+    # one from the other.
+    config_name = body.name
+    target = configs_dir / config_filename(config_name)
     if target.exists():
         # A stale file under a free name: refuse instead of clobbering.
         raise HTTPException(status_code=409, detail=f"config file already exists: {target.name}")
     try:
-        # The panel chooses the new Config's name here; the record keeps it in
-        # the explicit link (`config_name`), which every later read uses.
-        store.create_subscription(body.name, body.url, body.name)
+        store.create_subscription(body.name, body.url, config_name)
     except SubscriptionAlreadyExists as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
-        store.create_config(body.name, SUBSCRIPTION_DERIVED_KIND)
+        store.create_config(config_name, SUBSCRIPTION_DERIVED_KIND)
     except (ConfigAlreadyExists, ValueError) as exc:
         store.remove_subscription(body.name)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -141,20 +144,20 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
             overlay=store.get_overlay(),
         )
     except SubscriptionFetchError as exc:
-        _rollback_pair(store, configs_dir, body.name)
+        _rollback_pair(store, configs_dir, body.name, config_name)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except RenderFailed as exc:
-        _rollback_pair(store, configs_dir, body.name)
+        _rollback_pair(store, configs_dir, body.name, config_name)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RenderedConfigInvalid as exc:
-        _rollback_pair(store, configs_dir, body.name)
+        _rollback_pair(store, configs_dir, body.name, config_name)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KernelRejected as exc:
-        _rollback_pair(store, configs_dir, body.name)
+        _rollback_pair(store, configs_dir, body.name, config_name)
         raise HTTPException(status_code=400, detail=exc.output) from exc
     store.mark_subscription_refreshed(body.name)
     # Issue #43: the summary of the bytes the Kernel accepted.
-    store.set_config_summary(body.name, result.summary.as_dict())
+    store.set_config_summary(config_name, result.summary.as_dict())
     log.info("added subscription %s -> %s", body.name, target.name)
     return store.get_subscription(body.name)
 
@@ -291,14 +294,15 @@ async def delete_subscription(request: Request, name: str) -> dict[str, str]:
     return {"deleted": name}
 
 
-def _rollback_pair(store: MetadataStore, configs_dir: Path, name: str) -> None:
+def _rollback_pair(store: MetadataStore, configs_dir: Path, name: str, config_name: str) -> None:
     """Undo a half-created Subscription pair: both registrations and any file
     the pipeline managed to write. The Subscription goes first so its link
-    does not block the Config deletion."""
+    does not block the Config deletion. `name` and `config_name` are passed
+    separately because the pair is two records, not two spellings of one."""
     store.remove_subscription(name)
     try:
-        store.remove_config(name)
+        store.remove_config(config_name)
     except ConfigNotFound:
         pass
-    (configs_dir / config_filename(name)).unlink(missing_ok=True)
-    runtime_config_path(configs_dir.parent, name).unlink(missing_ok=True)
+    (configs_dir / config_filename(config_name)).unlink(missing_ok=True)
+    runtime_config_path(configs_dir.parent, config_name).unlink(missing_ok=True)

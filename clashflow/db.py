@@ -283,8 +283,12 @@ class MetadataStore:
 
     def create_subscription(self, name: str, url: str, config_name: str) -> None:
         """Register a new Subscription together with the link to the Source
-        Config it owns (issue #41): the pair is created in one statement, so a
-        Subscription never exists without its explicit `config_name`."""
+        Config it owns (issue #41). The link is written in the same INSERT as
+        the Subscription, so a Subscription row never exists without one; the
+        Config row itself is created by the caller right after (the pair is two
+        statements — see `clashflow.migrate`, which therefore declares no
+        foreign key). `config_name` is validated like `name` because it becomes
+        a filename."""
         validate_config_name(name)
         validate_config_name(config_name)
         try:

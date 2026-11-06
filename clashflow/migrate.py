@@ -60,13 +60,24 @@ def add_explicit_link_and_summary(conn: sqlite3.Connection) -> None:
     restored database) still boots instead of failing on a duplicate column.
     """
     if "config_name" not in _columns(conn, "subscriptions"):
-        conn.execute(
-            "ALTER TABLE subscriptions ADD COLUMN config_name TEXT REFERENCES configs(name)"
-        )
+        # Deliberately not `REFERENCES configs(name)`: creating a Subscription
+        # writes its row before the Config row exists (the pair is two
+        # statements, Subscription first), so the clause would only be a
+        # landmine the day anything enables `PRAGMA foreign_keys`. The link is
+        # held by the panel's pair rules and the unique index below.
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN config_name TEXT")
+    # Backfill by the only relationship V1 had — equal names — but accept a
+    # Config only if it is the kind V1 gave a Subscription (a leftover
+    # Subscription row must not claim a same-named Hand-written Config: that
+    # would make it undeletable and let the next refresh overwrite it).
     conn.execute(
         "UPDATE subscriptions SET config_name = name"
         " WHERE config_name IS NULL"
-        " AND EXISTS (SELECT 1 FROM configs WHERE configs.name = subscriptions.name)"
+        " AND EXISTS ("
+        "SELECT 1 FROM configs"
+        " WHERE configs.name = subscriptions.name"
+        " AND configs.kind = 'subscription-derived'"
+        ")"
     )
     # One Config, one owner: NULL links (a vanished Config) may repeat, a real
     # link may not.
