@@ -32,41 +32,56 @@ _中文_: 镜像基线
 _Avoid_: default version
 
 **Subscription**:
-A remote URL that yields a complete mihomo YAML Config; ClashFlow fetches it to refresh exactly one Config.
+A remote URL that yields a complete mihomo YAML; ClashFlow fetches it to refresh exactly one Source Config.
 _中文_: 订阅
 _Avoid_: sub, feed
 
-**Config**:
-A mihomo YAML configuration file managed by ClashFlow; the active Config determines the Kernel's behavior.
-_中文_: 配置
-_Avoid_: profile
+**Source Config**:
+A mihomo YAML owned by the user and edited in the Management Panel; a Subscription refresh rewrites exactly one Source Config verbatim.
+_中文_: 源配置
+_Avoid_: profile, user config, config
+
+**Runtime Config**:
+The mihomo YAML the Kernel actually runs, rendered from one Source Config and the Overlay; never edited by hand.
+_中文_: 运行配置
+_Avoid_: effective config, generated config, final config
+
+**Overlay**:
+The single panel-owned set of gateway-level settings — TUN Mode, DNS, ports, log level — whose keys win over a Source Config's at render time.
+_中文_: 网关覆盖
+_Avoid_: override, overwrite layer, merge layer
 
 **Active Config**:
-The single Config the Kernel is currently running.
+The Source Config whose Runtime Config the Kernel is currently running.
 _中文_: 当前配置
 _Avoid_: current config
 
 **Hand-written Config**:
-A Config not backed by any Subscription; its content belongs to the user and is never rewritten by a refresh.
+A Source Config not backed by any Subscription; its content belongs to the user and is never rewritten by a refresh.
 _中文_: 手写配置
 _Avoid_: manual config, custom config
 
 **Subscription-derived Config**:
-A Config owned by exactly one Subscription; every refresh rewrites it verbatim.
+A Source Config owned by exactly one Subscription; every refresh rewrites it verbatim.
 _中文_: 订阅配置
 _Avoid_: subscription config
 
+**TUN Mode**:
+The Overlay state in which the Kernel captures the gateway's LAN traffic through a TUN device instead of only listening on the proxy port.
+_中文_: TUN 模式
+_Avoid_: transparent proxy, gateway mode, tun2socks
+
 **Failure Class**:
-The named category of a failed Subscription refresh — `network`, `kernel-rejected` or `hot-apply-refused` — carried beside the raw error text so a self-hoster can tell where the refresh failed without reading the Kernel's English output.
+The named category of a failed Subscription refresh — `network`, `kernel-rejected`, `hot-apply-refused` or `render-failed` — carried beside the raw error text so a self-hoster can tell where the refresh failed without reading the Kernel's English output.
 _中文_: 失败类别
 _Avoid_: error kind, error type
 
 **Controller**:
-mihomo's external-controller REST/WebSocket API, the channel for runtime operations and for applying a Config.
+mihomo's external-controller REST/WebSocket API, the channel for runtime operations and for applying a Runtime Config.
 _中文_: 控制接口
 _Avoid_: 9090 API
 
 **Service Control**:
-ClashFlow's authority over the Kernel process lifecycle and over applying a Config to it.
+ClashFlow's authority over the Kernel process lifecycle, over rendering a Source Config into a Runtime Config, and over applying a Runtime Config to the Kernel.
 _中文_: 服务控制
 _Avoid_: service management
