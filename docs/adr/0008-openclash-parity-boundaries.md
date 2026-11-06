@@ -6,7 +6,7 @@
 
 ## 决定
 
-- **设备级排除走内核规则集，不碰宿主防火墙**。mihomo 的 `tun.route-exclude-address-set` 支持按规则集里的 IP/CIDR 把流量排除出 TUN（需要 nftables 与 `auto-route` + `auto-redirect`，二者本就在 ADR-0005 的部署前提里）。面板生成一份本地规则集文件即可，不需要写 iptables/nftables 规则，也不需要容器额外的宿主写权限。
+- **设备级排除走内核规则集，不碰宿主防火墙**。`tun.route-exclude-address-set` 的取值是 **rule-provider 名**，不是文件路径：面板要注入一条 `rule-providers`（`type: file`、`behavior: ipcidr`，指向 `/data/rulesets/` 里的文件）、再在 tun 段引用其名。它要求 `auto-route` + `auto-redirect` 同时开启（`listener/sing_tun/server.go:455-478`）；关掉这两项时排除集被**静默忽略**，设备照建、路由表为空。provider 不存在时 TUN 初始化直接失败（`rule-set not found`），但进程不退、控制接口仍回 204——只能靠 apply 自验发现。以上三条均以 netns 实测确认（mihomo v1.19.33）。
 - **不做 MAC 级与端口级的 LAN/WAN 黑白名单**：它们必须落在宿主防火墙链上，与「容器只碰自己的东西」冲突；IP/CIDR 级已覆盖家用场景（IoT 设备、旁路主机）。
 - **五项明确不抄**：流媒体解锁检测与自动选节点、oixCloud 签到、Small Flash Memory、Delay Start On Boot、MAC 级黑白名单。
 - **数据面照抄**：六种操作模式（`redir-host` / `fake-ip` × 普通 / `tun` / `tun-mix`）、代理模式 `rule`/`global`/`direct`、完整端口族（http/socks/mixed/redir/tproxy/dns）、UDP 与 QUIC 开关。

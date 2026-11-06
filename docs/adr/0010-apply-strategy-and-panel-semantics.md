@@ -14,6 +14,7 @@
 - **节点选择历史按配置保存**：切换配置前把 mihomo 的 `cache.db` 存成该配置的快照，切回时还原并与内核 `profile.store-selected` 对齐；同名组优先。V1 只靠组名匹配，切配置即丢选择。
 - **自定义节点范围**：常用 8 种协议（ss / ssr / vmess / vless / trojan / hysteria2 / tuic / anytls）逐字段；其余协议走「分享链接导入 + Other Parameters 透传」，不重写上游 1856 行的全协议表单。
 - **移植的健壮性规则**（上游已有，我们照做）：YAML 首行 base64 自动解码、`protocol-param` 与 `short-id` 强制加引号、`!str` 转义修正；规则注入用三锚点（`DST-PORT,80` / 首个 `MATCH|FINAL` / 首个 `GEOIP`）；规则目标组不存在则跳过并告警；`IP-CIDR` 类规则自动补 `/32`、`/128`；空策略组兜底为 `proxies: [DIRECT]`；组与节点重名去重；改组名时同步改所有引用。
+- **TUN 组合用 netns 端到端用例验证**：`unshare -rn` + 真实内核二进制即可建 tun、装路由与 nftables 规则，不需要 root，也不碰宿主网络。用例覆盖四组合的设备与路由、缺少 provider 时自验能否抓到、`auto-route/auto-redirect` 关闭时是否拒绝配置。进 CI；runner 不支持 user namespace 时跳过并在发布前手工跑。
 - **校验三重**：`mihomo -t` + YAML 可解析 + 必须含 `proxies` 或 `proxy-providers`，否则判空订阅失败。
 
 ## 后果

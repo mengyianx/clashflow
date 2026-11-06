@@ -9,6 +9,7 @@ TUN 要接管的是**宿主**的网络栈：`auto-route` 写路由、`auto-redir
 - 镜像**只支持 `--network host`**，删除端口映射模式。README 的 `docker run` 模板同时给出 `--cap-add NET_ADMIN` 与 `--device /dev/net/tun`。
 - **TUN 默认关闭**（Overlay 的 `tun.enable: false`）：迁移后行为与 V1 一致（`7890` 显式代理 + 面板），由用户在面板里一键开启。降级路径因此始终存在。
 - **53 由内核持有，且 TUN 模式下是必需项**：mihomo 的 `dns-hijack` 只劫持进入 tun 设备的流量，LAN 设备指向网关 IP 的 DNS 查询走宿主栈、不经 tun，所以 TUN 模式下 `dns.listen` 必须是 `0.0.0.0:53`，否则 fake-ip 不生效。开启 TUN 时面板先做占用检测（`systemd-resolved`、`dnsmasq`、其他监听者）并给出停用指令，用户确认后才把 `dns.listen` 落到 53；不满足则拒绝开启并说明原因。
+- **模式不是六选一，是两个开关**：DNS 增强模式（`fake-ip` / `redir-host`）与 TUN 开关；端口监听（mixed/http/socks）独立于 TUN。上游的 `*-mix` 源于它用 nat REDIRECT 把 TCP 交给 redir 端口、UDP 交给 tun；mihomo 自己的 `auto-redirect` 让 TCP/UDP 都进 tun 的转发器，端口只是并列入口，所以 mix 没有对应语义。迁移说明里给出 OpenClash 六个模式名到这两个开关的映射表。netns 实测（mihomo v1.19.33）确认 `7890` 与 `Meta` 设备可同时工作。
 - **启动自检**：`8080`、`9090`（必须回环）、TUN 开启时的 `53` 冲突 → 中文报错并拒绝启动；`7890` 冲突、`ip_forward`、nftables 可用性 → 只警告，并进诊断包。
 - **TUN 健康监测**：定期检查 tun 设备与默认路由，丢失则自动重启内核一次并标红；连续失败转 `degraded`（复用现有退避与上限）。
 

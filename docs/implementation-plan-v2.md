@@ -12,7 +12,7 @@
 | 四段式生成骨架（键合并 → 规则注入 → sniffer/hosts/命名策略 → 组与节点增删改） | ✅ | |
 | 渲染健壮性：YAML 容错、规则三锚点、目标组存在性校验、IP 补 CIDR、空组兜底、重名去重、改名联动 | ✅ | |
 | 只支持 host 网络 + TUN + 53 强制接管（ADR-0005） | ✅ | |
-| 数据面：六种操作模式、`rule/global/direct`、全端口族、UDP/QUIC 开关 | ✅ | |
+| 数据面：DNS 模式（fake-ip / redir-host）× TUN 开关 × 端口监听 = 四组合，另有 `rule/global/direct`、全端口族、UDP/QUIC 开关 | ✅ | |
 | 应用策略：模式切换重启内核、其余热载、5 分钟 10 次限流、apply 后三步自验（ADR-0010） | ✅ | |
 | 旁路由与流量控制：路由器自身代理、绕过大陆、常见端口模式、内网直连、接口绑定、旁路由兼容、masq cache | ✅ | |
 | 订阅转换（内置 subconverter）+ 多 URL + ETag + UA 降级 + 默认排除关键字 | ✅ | |
@@ -77,7 +77,7 @@ clashflow/
 ├── overlay.py     # Overlay 读写、YAML 导出/导入、被覆盖键标注、替换/追加语义
 ├── datapath.py    # 操作模式 × 端口族 × UDP/QUIC 的键映射（六种组合）
 ├── traffic.py     # 流量控制与旁路由参数
-├── acl.py         # 设备排除：IP/CIDR → /data/rulesets → tun.route-exclude-address-set
+├── acl.py         # 设备排除：IP/CIDR → /data/rulesets + 注入 rule-providers（ipcidr）+ 引用到 tun.route-exclude-address-set
 ├── subscribe.py   # 多 URL 抓取（ETag、UA 降级、拆分归一化）→ 转换 → 三重校验 → 源配置
 ├── converter.py   # subconverter 守护、模板与过滤参数、请求头隔离、/version 探测
 ├── dnsconf.py     # DNS 全量：6 组服务器、过滤器、hosts、域名策略（2.1）
@@ -109,7 +109,7 @@ web/src/pages/
 
 1. **启动**：读 `user_version` → 需要则备份并迁移 → 自检端口/环境 → 起 subconverter → 渲染 Active（含数据面与流量控制键、注册排除规则集）→ spawn 内核 → 探活 → **TUN 就绪检查（设备与路由，超时重试，最终 degraded）** → 起调度、采样与看门狗。
 2. **保存源配置**：候选源 → `yamlfix` → 四段 `render` → 校验三重 → 原子写源 → 原子写运行配置 → 是 Active 则热载 → **三步自验**；任一步失败，源与运行配置都逐字节保持旧值。
-3. **改 Overlay**：校验 → 判断是否触及模式类键（六种模式、TUN 开关、DNS 增强模式）→ 是则重启内核，否则热载（受 5 分钟 10 次限流约束）；需要时先落规则集文件。
+3. **改 Overlay**：校验 → 判断是否触及模式类键（TUN 开关、DNS 增强模式）→ 是则重启内核，否则热载（受 5 分钟 10 次限流约束）；需要时先落规则集文件并注入 provider 条目。渲染期强制约束：`route-exclude-address-set` 非空时 `auto-route` 与 `auto-redirect` 必须为真，否则拒绝保存（关闭时排除集会静默失效）。
 4. **订阅刷新**：多 URL 拆分归一化 → 带 ETag 抓取（UA 降级链）→ 形态判定（完整 YAML pass-through；链接/base64 走 subconverter，套模板与过滤，请求头与后端头隔离）→ 三重校验 → 四段 render → 原子写源 → 原子写运行配置 → 是 Active 则热载。失败分类沿用 `network` / `conversion-failed` / `render-failed` / `kernel-rejected` / `hot-apply-refused`。
 5. **导入 OpenClash**：上传最终 `config.yaml` → 作为新源配置落盘 → 四段渲染 → 校验三重；订阅与覆写由用户重建（不逆向 uci）。
 6. **切换 Active**：保存当前配置的节点选择快照 → 渲染目标源 → 校验 → 写运行配置 → 热载/重启 → 还原目标配置的快照 → 成功后记录。
@@ -125,7 +125,7 @@ web/src/pages/
 | 里程碑 | 内容 | 验收（可运行 smoke） |
 |---|---|---|
 | M1 渲染层与迁移 | `render.py` 四段骨架、`yamlfix.py`、`rules.py`、`summary.py`、迁移链、apply 管线改造；Overlay 页、diff 页、总览状态与摘要 | 用 v1 数据卷启动：自动备份并迁移、内核以运行配置起来；改 `log-level` 后热载且源配置逐字节不变；坏配置被拒时错误带段名、摘要不更新；缺 `proxies` 与 `proxy-providers` 的订阅被三重校验拦下 |
-| M2 数据面与旁路由 | 六种操作模式、代理模式、全端口族、UDP/QUIC；流量控制全套；模式切换重启、热载限流、apply 自验、启动期 TUN 就绪 | 六种模式各起一次，每种都能让一台 LAN 设备经 TUN 出网；切模式后面板提示断连且内核确实重启；把内核的 TUN 设备手工删掉后自验报 `hot-apply-refused` 并回滚；切到「绕过大陆」后国内直连、国外走代理 |
+| M2 数据面与旁路由 | DNS 模式 × TUN × 端口四组合、代理模式、全端口族、UDP/QUIC；流量控制全套；模式切换重启、热载限流、apply 自验、启动期 TUN 就绪；netns 端到端用例进 CI | 四组合各起一次，每种都能让一台 LAN 设备出网；切模式后面板提示断连且内核确实重启；手工删掉 tun 设备后自验报 `hot-apply-refused` 并回滚；把 `route-exclude-address-set` 指向不存在的 provider（netns 用例）时自验能抓到 TUN 未创建；`auto-route/auto-redirect` 关闭且排除集非空时保存被拒；切到「绕过大陆」后国内直连、国外走代理 |
 | M3 订阅转换与参数面 | subconverter 守护、多 URL 归一化、ETag、UA 降级、模板、过滤、默认排除、emoji/排序/节点类型、自定义头隔离、流量与到期、Age | 导入分享链接订阅 → 生成源配置并可激活；加第二个 URL 后节点合并；套 ACL4SSR 模板后规则组出现；关键词过滤命中且组内引用被摘除；`mihomo age keygen` 后能导入加密订阅；subconverter 被杀 → 标 `conversion-failed`、旧配置不变 |
 | M4 导入与发布 2.0 | OpenClash `config.yaml` 导入、迁移说明、README 重写、多架构 | 用导出的 OpenClash 配置导入后整网可用；按新 README 从零部署成功 |
 
@@ -143,7 +143,7 @@ web/src/pages/
 
 1. **`PUT /configs` 恒 204**：运行期失败（TUN 创建失败、端口占用）不会回报，只能靠面板自验与看门狗兜底；这也是模式切换选择重启的原因。
 2. **`iptables.enable` 与 `tun.enable` 同时为真时内核直接 `os.Exit(2)`**（`hub/executor/executor.go` 的 iptables 分支）：Overlay 校验必须把这对组合判为非法，否则内核会静默退出并进入崩溃退避。
-3. **六种操作模式 × nftables/路由组合**必须逐项实测，未验证的组合不得写进 README 的「支持」列表。
+3. **排除集的两条静默失败**（netns 实测）：provider 名不存在时 TUN 直接建不起来、进程不退；`auto-route/auto-redirect` 关闭时排除集被忽略且无报错。两条都必须由渲染期校验与 apply 自验兜住，不能依赖内核报错。
 4. **上游的 GEO 更新先删后搬**（`openclash_geo.sh`）：中途失败会丢旧文件，我们一律原子替换，不照抄。
 5. **TUN 模式下 53 是必需项**：宿主若有 systemd-resolved/dnsmasq 占着 53，开 TUN 会被拒；这是有意为之，避免 fake-ip 静默失效。
 6. **旁路由**：LAN 设备的网关与 DNS 不指向 ClashFlow 主机时 TUN 收不到流量；只能靠文档与诊断页表达。
