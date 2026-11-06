@@ -3,11 +3,14 @@
 paths live under `/api/panel/...`, registered before the Controller reverse
 proxy in clashflow/main.py).
 
-Name mapping (plan §3): a Subscription's name IS its Subscription-derived
-Config's name; the server assigns `<name>.yaml` under `/data/configs`
-(db.config_filename) and registers it with kind=subscription-derived. A
-Subscription and its Config are therefore created, refreshed and deleted as
-a pair — a registered Subscription always has exactly one Config.
+Link (issue #41): a Subscription names the Source Config it owns in
+`subscriptions.config_name` — an explicit column, no longer "the two names
+are equal". Adding a Subscription creates both records and the link in one
+step; refresh, delete and the Active check read the link, so a Config is
+found by its owner rather than by convention. A Subscription and its Config
+are therefore created, refreshed and deleted as a pair — a registered
+Subscription always has exactly one Config, unless a legacy record's Config
+had already vanished before the v2 migration.
 
 Failure classes map to status codes like the save pipeline: a fetch failure
 -> 502, a render-stage or Kernel config-test refusal -> 400 (the render
@@ -16,8 +19,7 @@ fetches through the same pipeline and rolls both records back on any failure,
 so a failed add creates nothing. A failed refresh keeps the previous Source
 Config and Runtime Config bytes byte-identical and marks the Subscription with
 the reason (`last_error`) and its failure class (`last_error_class`, ticket
-#27) for the next scheduled retry (#13).
-"""
+#27) for the next scheduled retry (#13)."""
 
 import logging
 from pathlib import Path
@@ -86,6 +88,19 @@ def _validate_user_agent(user_agent: str) -> str:
     return stripped
 
 
+def _source_config_name(entry: SubscriptionEntry) -> str:
+    """The Source Config this Subscription links to (issue #41). A record
+    without a link has no source to refresh; the panel answers 404 instead of
+    guessing a name."""
+    config_name = entry.get("config_name")
+    if not isinstance(config_name, str):
+        raise HTTPException(
+            status_code=404,
+            detail=f"subscription has no source config: {entry.get('name')}",
+        )
+    return config_name
+
+
 @router.post("/api/panel/subscriptions", status_code=201)
 async def add_subscription(request: Request, body: NewSubscription) -> SubscriptionEntry:
     """Add a Subscription by URL: fetch it, register the pair (Subscription +
@@ -105,7 +120,9 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
         # A stale file under a free name: refuse instead of clobbering.
         raise HTTPException(status_code=409, detail=f"config file already exists: {target.name}")
     try:
-        store.create_subscription(body.name, body.url)
+        # The panel chooses the new Config's name here; the record keeps it in
+        # the explicit link (`config_name`), which every later read uses.
+        store.create_subscription(body.name, body.url, body.name)
     except SubscriptionAlreadyExists as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
@@ -114,7 +131,7 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
         store.remove_subscription(body.name)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
-        await refresh_subscription(
+        result = await refresh_subscription(
             kernel,
             request.app.state.api_client,
             request.app.state.secret,
@@ -136,6 +153,8 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
         _rollback_pair(store, configs_dir, body.name)
         raise HTTPException(status_code=400, detail=exc.output) from exc
     store.mark_subscription_refreshed(body.name)
+    # Issue #43: the summary of the bytes the Kernel accepted.
+    store.set_config_summary(body.name, result.summary.as_dict())
     log.info("added subscription %s -> %s", body.name, target.name)
     return store.get_subscription(body.name)
 
@@ -157,14 +176,18 @@ async def refresh_subscription_endpoint(request: Request, name: str) -> Subscrip
     kernel: KernelManager = request.app.state.kernel
     try:
         entry = store.get_subscription(name)
-        active = store.get_config(name)["active"]
-    except (SubscriptionNotFound, ConfigNotFound) as exc:
+    except SubscriptionNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    target = request.app.state.configs_dir / config_filename(name)
+    config_name = _source_config_name(entry)
+    try:
+        active = store.get_config(config_name)["active"]
+    except ConfigNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    target = request.app.state.configs_dir / config_filename(config_name)
     url = cast("str", entry["url"])  # the url column is NOT NULL
     user_agent = cast("str | None", entry["user_agent"])
     try:
-        await refresh_subscription(
+        result = await refresh_subscription(
             kernel,
             request.app.state.api_client,
             request.app.state.secret,
@@ -183,6 +206,7 @@ async def refresh_subscription_endpoint(request: Request, name: str) -> Subscrip
         )
         raise HTTPException(status_code=status, detail=detail) from exc
     store.mark_subscription_refreshed(name)
+    store.set_config_summary(config_name, result.summary.as_dict())
     log.info("refreshed subscription %s", name)
     return store.get_subscription(name)
 
@@ -232,31 +256,49 @@ async def update_subscription_settings(
 
 @router.delete("/api/panel/subscriptions/{name}")
 async def delete_subscription(request: Request, name: str) -> dict[str, str]:
-    """Delete the Subscription together with its Subscription-derived Config
-    (the pair); an Active Config is refused, like Config deletion."""
+    """Delete the Subscription together with the Source Config it links to
+    (issue #41: the link decides which Config, never the two names being
+    equal); an Active Config is refused, like Config deletion.
+
+    The Active check runs BEFORE anything is removed, so a refusal leaves the
+    pair intact. The Subscription row then goes first, which drops the link
+    and lets the shared Config deletion path run without tripping over it."""
     store: MetadataStore = request.app.state.store
     configs_dir: Path = request.app.state.configs_dir
     try:
-        store.get_subscription(name)
+        entry = store.get_subscription(name)
     except SubscriptionNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    try:
-        store.remove_config(name)
-    except ConfigIsActive as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ConfigNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    (configs_dir / config_filename(name)).unlink(missing_ok=True)
-    runtime_config_path(configs_dir.parent, name).unlink(missing_ok=True)
+    config_name = entry.get("config_name")
+    if not isinstance(config_name, str):
+        # A legacy record whose same-name Config had already vanished: there
+        # is nothing to delete but the Subscription itself.
+        store.remove_subscription(name)
+        log.info("deleted subscription %s (no linked config)", name)
+        return {"deleted": name}
+    if store.get_active() == config_name:
+        raise HTTPException(status_code=409, detail=str(ConfigIsActive(config_name)))
     store.remove_subscription(name)
-    log.info("deleted subscription %s and its config", name)
+    try:
+        store.remove_config(config_name)
+    except ConfigNotFound:
+        # The registration is gone but the files may not be; the unlinks
+        # below still run so no orphan artifact survives the delete.
+        log.warning("subscription %s linked a config that was not registered", name)
+    (configs_dir / config_filename(config_name)).unlink(missing_ok=True)
+    runtime_config_path(configs_dir.parent, config_name).unlink(missing_ok=True)
+    log.info("deleted subscription %s and its config %s", name, config_name)
     return {"deleted": name}
 
 
 def _rollback_pair(store: MetadataStore, configs_dir: Path, name: str) -> None:
     """Undo a half-created Subscription pair: both registrations and any file
-    the pipeline managed to write."""
+    the pipeline managed to write. The Subscription goes first so its link
+    does not block the Config deletion."""
     store.remove_subscription(name)
-    store.remove_config(name)
+    try:
+        store.remove_config(name)
+    except ConfigNotFound:
+        pass
     (configs_dir / config_filename(name)).unlink(missing_ok=True)
     runtime_config_path(configs_dir.parent, name).unlink(missing_ok=True)

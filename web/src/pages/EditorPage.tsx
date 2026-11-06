@@ -87,9 +87,22 @@ export function EditorPage() {
             ? `${CONFIG_KIND_LABEL[entry.kind]} · ${entry.filename} · ${entry.active ? "当前配置" : "未在运行"}`
             : "正在读取…"}
         </p>
+        {entry ? (
+          <p className="mt-1 text-xs text-ink-3">
+            {entry.summary
+              ? `内容：${entry.summary.nodes} 节点 / ${entry.summary.groups} 组 / ${entry.summary.rules} 规则`
+              : "内容：尚未通过校验"}
+          </p>
+        ) : null}
       </div>
 
       <ErrorBanner banner={banner} onDismiss={clear} />
+
+      {entry?.summary?.age_key_missing ? (
+        <Alert variant="warn" title="缺少 Age key" className="mb-4">
+          这份配置是 Age 加密的，面板没有可用 key，无法统计内容。保存会在渲染阶段被拒。
+        </Alert>
+      ) : null}
 
       {entry && entry.overridden_keys.length > 0 ? (
         <Alert variant="info" title="以下键由网关覆盖改写" className="mb-4">

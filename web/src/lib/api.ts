@@ -28,11 +28,27 @@ export interface ServiceHealth {
   active_config: string;
 }
 
+export interface ConfigSummary {
+  /** Top-level `proxies` entries; provider-backed nodes are not counted. */
+  nodes: number;
+  groups: number;
+  rules: number;
+  /** The Config is Age-encrypted and the panel holds no Age key. */
+  age_key_missing: boolean;
+}
+
 export interface ConfigEntry {
   name: string;
   kind: ConfigKind;
   filename: string;
   active: boolean;
+  /** Counts of the last successful validation (issue #43); null until a
+   * commit reached the Kernel — a migrated record, or one whose last save
+   * was refused. */
+  summary: ConfigSummary | null;
+  /** The Subscription that owns this Source Config (the explicit link, issue
+   * #41), or null for a Hand-written Config. */
+  subscription: string | null;
 }
 
 export interface ConfigContent extends ConfigEntry {
@@ -68,7 +84,11 @@ export interface RuntimeDiffKey {
 export interface SubscriptionEntry {
   name: string;
   url: string;
-  config: string;
+  /** The Source Config this Subscription owns: the registered name and its
+   * server-assigned filename (issue #41's explicit link). Null only for a
+   * legacy record whose Config had already vanished before migration. */
+  config_name: string | null;
+  config: string | null;
   state: SubscriptionState;
   last_refresh_at: string | null;
   last_error: string | null;

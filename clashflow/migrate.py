@@ -39,12 +39,42 @@ BACKUP_DIRNAME = "backup"
 
 type Migration = Callable[[sqlite3.Connection], None]
 
+
+def add_explicit_link_and_summary(conn: sqlite3.Connection) -> None:
+    """Step 2 (issues #41, #43): the Subscription -> Source Config link and
+    the per-Config summary.
+
+    The link is a column, not a convention: every Subscription names the
+    Config it owns, and after this step no code infers ownership from the two
+    names being equal. Existing V1 volumes are backfilled by that same-name
+    convention — the only relationship V1 ever had — and the backfill is an
+    UPDATE that only writes links: no Config row, file or Subscription is
+    removed, so a Config the backfill cannot pair (its Subscription was
+    deleted out of band) stays registered and deletable.
+
+    The summary column stores the counts of the last successful validation as
+    JSON, NULL until a commit reaches the Kernel.
+    """
+    conn.execute("ALTER TABLE subscriptions ADD COLUMN config_name TEXT REFERENCES configs(name)")
+    conn.execute(
+        "UPDATE subscriptions SET config_name = name"
+        " WHERE EXISTS (SELECT 1 FROM configs WHERE configs.name = subscriptions.name)"
+    )
+    # One Config, one owner: NULL links (a vanished Config) may repeat, a real
+    # link may not.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_config_name ON subscriptions(config_name)"
+    )
+    conn.execute("ALTER TABLE configs ADD COLUMN summary TEXT")
+
+
 # Version -> the step that takes a database FROM `version - 1` TO `version`.
 # Step 1 is the V1 schema itself, which `ensure_schema` can also apply to a
 # database that never had a version; later steps append here and are never
 # edited once released (a volume may stop at any version).
 MIGRATIONS: dict[int, Migration] = {
     1: ensure_schema,
+    2: add_explicit_link_and_summary,
 }
 
 
@@ -143,14 +173,10 @@ def backup_volume(data_dir: Path, *, from_version: int) -> Path:
 
 
 def _create_current(db_path: Path) -> None:
-    conn = _connect(db_path)
-    try:
-        conn.execute("BEGIN")
-        ensure_schema(conn)
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
-    finally:
-        conn.close()
+    """A fresh database is built by running the whole chain from version 0:
+    the baseline schema is step 1, so a new volume and a migrated one end up
+    byte-for-byte the same shape (one applier, one history)."""
+    _run_chain(db_path, from_version=0)
 
 
 def _run_chain(db_path: Path, *, from_version: int) -> None:

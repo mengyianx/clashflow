@@ -44,6 +44,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,7 @@ import yaml
 
 from clashflow.kernel import CONTROLLER_ADDR
 from clashflow.render import DEFAULT_STAGES, Stage, render
+from clashflow.summary import ConfigSummary, summarize
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +111,20 @@ class Unwritten:
 
 
 UNWRITTEN = Unwritten()
+
+
+@dataclass(frozen=True)
+class CommitResult:
+    """What a commit produced: the bytes now in the Runtime Config, and the
+    summary of those bytes (issue #43).
+
+    The summary is computed here, on the same bytes validation accepted, and
+    returned so the caller can record it. A caller that never records it —
+    boot's render, a test — loses nothing: the summary is derived data, the
+    Runtime Config is the artifact."""
+
+    runtime: bytes
+    summary: ConfigSummary
 
 
 async def validate_config(kernel_bin: str, data_dir: Path, config_file: Path) -> None:
@@ -228,7 +244,7 @@ async def commit_rendered_config(
     overlay: Mapping[str, Any],
     should_reload: Callable[[], bool] | None,
     stages: Sequence[tuple[str, Stage]] = DEFAULT_STAGES,
-) -> bytes:
+) -> CommitResult:
     """The one path every Config change takes: render, validate the Runtime
     Config, write both files, reload, restore on failure.
 
@@ -254,7 +270,9 @@ async def commit_rendered_config(
     Failures propagate as their own classes — `RenderFailed`,
     `KernelRejected`, `ConfigFileMissing`, `HotApplyError` — so each caller
     maps them onto its own surface (HTTP status, Failure Class) without
-    re-implementing the restore rules. Returns the rendered bytes.
+    re-implementing the restore rules. Returns the Runtime Config bytes and
+    the summary of those bytes; a failed commit returns nothing, so a caller
+    that records the summary can only ever record bytes the Kernel accepted.
     """
     if isinstance(content, Unwritten):
         if not source_target.is_file():
@@ -303,7 +321,7 @@ async def commit_rendered_config(
         if wrote_runtime:
             _restore(runtime_target, previous_runtime)
         raise
-    return runtime_bytes
+    return CommitResult(runtime=runtime_bytes, summary=summarize(source_bytes, runtime_bytes))
 
 
 def _upstream_message(resp: httpx.Response) -> str:

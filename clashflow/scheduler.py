@@ -112,12 +112,22 @@ class SubscriptionScheduler:
         mark the outcome on the store, mirroring
         `clashflow.api.subscriptions.refresh_subscription_endpoint`."""
         name = cast("str", entry["name"])
-        target = self._configs_dir / config_filename(name)
+        config_name = cast("str | None", entry["config_name"])
+        if config_name is None:
+            # A legacy record whose Config vanished before migration: there is
+            # nothing to write; mark it like a vanished registration so the
+            # ticker keeps going and the panel shows why.
+            reason = mark_subscription_refresh_failed(
+                self._store, name, ConfigNotFound(f"subscription has no source config: {name}")
+            )
+            log.warning("scheduled refresh of subscription %s failed: %s", name, reason)
+            return
+        target = self._configs_dir / config_filename(config_name)
         url = cast("str", entry["url"])  # the url column is NOT NULL
         user_agent = cast("str | None", entry["user_agent"])
         try:
-            active = self._store.get_config(name)["active"]
-            await refresh_subscription(
+            active = self._store.get_config(config_name)["active"]
+            result = await refresh_subscription(
                 self._kernel,
                 self._client,
                 self._secret,
@@ -135,4 +145,5 @@ class SubscriptionScheduler:
             log.warning("scheduled refresh of subscription %s failed: %s", name, reason)
             return
         self._store.mark_subscription_refreshed(name)
+        self._store.set_config_summary(config_name, result.summary.as_dict())
         log.info("scheduled refresh updated subscription %s", name)
