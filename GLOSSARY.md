@@ -56,6 +56,11 @@ A Config owned by exactly one Subscription; every refresh rewrites it verbatim.
 _中文_: 订阅配置
 _Avoid_: subscription config
 
+**Failure Class**:
+The named category of a failed Subscription refresh — `network`, `kernel-rejected` or `hot-apply-refused` — carried beside the raw error text so a self-hoster can tell where the refresh failed without reading the Kernel's English output.
+_中文_: 失败类别
+_Avoid_: error kind, error type
+
 **Controller**:
 mihomo's external-controller REST/WebSocket API, the channel for runtime operations and for applying a Config.
 _中文_: 控制接口
