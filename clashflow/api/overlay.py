@@ -25,6 +25,7 @@ from clashflow.apply import (
     ConfigFileMissing,
     HotApplyError,
     KernelRejected,
+    RenderedConfigInvalid,
     commit_rendered_config,
 )
 from clashflow.db import config_filename, runtime_config_path
@@ -90,7 +91,13 @@ async def _apply(request: Request, values: dict[str, Any]) -> dict[str, object]:
                 overlay=canonical,
                 should_reload=kernel.alive,
             )
-        except (ConfigFileMissing, RenderFailed, KernelRejected, HotApplyError) as exc:
+        except (
+            ConfigFileMissing,
+            RenderFailed,
+            RenderedConfigInvalid,
+            KernelRejected,
+            HotApplyError,
+        ) as exc:
             raise_for_commit_failure(exc)
     store.set_overlay(canonical)
     log.info("saved overlay (%d owned keys)", len(canonical))

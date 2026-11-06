@@ -26,7 +26,7 @@ from typing import cast
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from clashflow.apply import KernelRejected
+from clashflow.apply import KernelRejected, RenderedConfigInvalid
 from clashflow.db import (
     SUBSCRIPTION_DERIVED_KIND,
     ConfigAlreadyExists,
@@ -129,6 +129,9 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
     except RenderFailed as exc:
         _rollback_pair(store, configs_dir, body.name)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RenderedConfigInvalid as exc:
+        _rollback_pair(store, configs_dir, body.name)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KernelRejected as exc:
         _rollback_pair(store, configs_dir, body.name)
         raise HTTPException(status_code=400, detail=exc.output) from exc
@@ -175,7 +178,9 @@ async def refresh_subscription_endpoint(request: Request, name: str) -> Subscrip
         detail = mark_subscription_refresh_failed(store, name, exc)
         # Render and Kernel refusals are content problems and map to 400;
         # network and hot-apply refusals map to 502.
-        status = 400 if isinstance(exc, (RenderFailed, KernelRejected)) else 502
+        status = (
+            400 if isinstance(exc, (RenderFailed, RenderedConfigInvalid, KernelRejected)) else 502
+        )
         raise HTTPException(status_code=status, detail=detail) from exc
     store.mark_subscription_refreshed(name)
     log.info("refreshed subscription %s", name)

@@ -5,7 +5,7 @@ a real fixture observed through its Controller API and real proxy traffic.
 """
 
 import httpx
-from conftest import origin_server
+from conftest import PROBE_PROXY_BLOCK, origin_server
 
 CONTROLLER = "http://127.0.0.1:9090"
 
@@ -122,7 +122,7 @@ async def test_copy_produces_an_independent_config_and_edits_to_one_never_affect
         assert resp.json()["content"] == SOURCE_BODY
 
         # Editing the copy never touches the source.
-        edited = "mixed-port: 7891\nallow-lan: true\n"
+        edited = PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n"
         resp = await panel.client.put("/api/panel/configs/cloned", content=edited)
         assert resp.status_code == 200
         assert (configs_dir / "cloned.yaml").read_bytes() == edited.encode()

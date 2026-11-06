@@ -11,15 +11,18 @@ Empty Config semantics: creation writes the YAML empty mapping `{}`, which
 the pinned Kernel (v1.19.32) loads as a defaults-only config — a zero-byte
 file is refused by the Kernel ("configuration file … is empty").
 
-Save semantics (ADR-0004): render (Source + Overlay) → `mihomo -t` on the
-RENDERED Runtime Config → atomic writes of the Source Config (verbatim) and
+Save semantics (ADR-0004): render (Source + Overlay) → triple validation of
+the RENDERED bytes (YAML parses, `proxies` or `proxy-providers` present, the
+Kernel's `-t` accepts it) → atomic writes of the Source Config (verbatim) and
 the Runtime Config → hot-apply when the Config is the Active one. A render
 failure answers 400 with a message that begins with the failing stage; a
-Kernel rejection answers 400 with the Kernel's own output; either leaves both
-files untouched. A refused hot-apply answers 502 with the Controller's refusal
-text and puts both pre-save states back — the pre-save bytes, or absence when
-a file was gone (absent restores as absent) — so the stored Config stays the
-one the Kernel keeps running (the same restore the Subscription refresh uses).
+render with nothing to proxy answers 400 too (issue #36: an empty Subscription
+must never overwrite a working Config); a Kernel rejection answers 400 with the
+Kernel's own output; each leaves both files untouched. A refused hot-apply
+answers 502 with the Controller's refusal text and puts both pre-save states
+back — the pre-save bytes, or absence when a file was gone (absent restores as
+absent) — so the stored Config stays the one the Kernel keeps running (the
+same restore the Subscription refresh uses).
 
 The Runtime Config is read-only: it is a build artifact previewable at
 `GET .../runtime` and diffable at `GET .../runtime/diff`, never writable.
@@ -45,6 +48,7 @@ from clashflow.apply import (
     ConfigFileMissing,
     HotApplyError,
     KernelRejected,
+    RenderedConfigInvalid,
     Unwritten,
     commit_rendered_config,
 )
@@ -126,7 +130,13 @@ async def _commit(
             overlay=request.app.state.store.get_overlay(),
             should_reload=should_reload,
         )
-    except (ConfigFileMissing, RenderFailed, KernelRejected, HotApplyError) as exc:
+    except (
+        ConfigFileMissing,
+        RenderFailed,
+        RenderedConfigInvalid,
+        KernelRejected,
+        HotApplyError,
+    ) as exc:
         raise_for_commit_failure(exc)
 
 

@@ -9,13 +9,13 @@ before.
 """
 
 import httpx
-from conftest import origin_server
+from conftest import PROBE_PROXY_BLOCK, origin_server
 
 from clashflow import apply as apply_module
 from clashflow.apply import HotApplyError
 from clashflow.kernel import CONTROLLER_ADDR
 
-SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
+SUB_V1 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7892\nallow-lan: true\n"
 
 
 async def _served_configs(secret: str) -> dict:
@@ -46,7 +46,8 @@ async def test_every_write_path_answers_a_refused_reload_the_same_way(
         # boot bytes the Controller refused.
         monkeypatch.setattr("clashflow.apply.hot_apply", refuse)
         resp = await panel.client.put(
-            "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+            "/api/panel/configs/default",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n",
         )
         assert (resp.status_code, resp.json()["detail"]) == (502, "forced hot-apply failure")
         assert target.read_bytes() == before
@@ -58,7 +59,8 @@ async def test_every_write_path_answers_a_refused_reload_the_same_way(
             await panel.client.post("/api/panel/configs", json={"name": "alt"})
         ).status_code == 201
         resp = await panel.client.put(
-            "/api/panel/configs/alt", content="mixed-port: 7893\nallow-lan: true\n"
+            "/api/panel/configs/alt",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 7893\nallow-lan: true\n",
         )
         assert resp.status_code == 200
         alt_before = alt.read_bytes()
@@ -115,7 +117,11 @@ async def test_a_kernel_that_dies_during_validation_stores_the_bytes_without_a_r
         monkeypatch.setattr("clashflow.apply.hot_apply", must_not_reload)
 
         resp = await panel.client.put(
-            "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+            "/api/panel/configs/default",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n",
         )
         assert resp.status_code == 200
-        assert target.read_bytes() == b"mixed-port: 7891\nallow-lan: true\n"
+        assert (
+            target.read_bytes()
+            == PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7891\nallow-lan: true\n"
+        )

@@ -13,14 +13,14 @@ import json
 
 import httpx
 import pytest
-from conftest import TEST_PANEL_PASSWORD, lan_ip, origin_server
+from conftest import PROBE_PROXY_BLOCK, TEST_PANEL_PASSWORD, lan_ip, origin_server
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from clashflow.auth import SESSION_COOKIE
 
 BROWSER_HEADERS = {"Accept": "text/html,application/xhtml+xml"}
-SUB_BODY = b"mixed-port: 7892\nallow-lan: true\n"
+SUB_BODY = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7892\nallow-lan: true\n"
 
 
 def anon_client(app) -> httpx.AsyncClient:
@@ -209,7 +209,8 @@ async def test_after_login_all_panel_flows_work_through_the_session(boot_app) ->
             )
             assert created.status_code == 201
             saved = await client.put(
-                "/api/panel/configs/custom", content="mixed-port: 7890\nallow-lan: true\n"
+                "/api/panel/configs/custom",
+                content=PROBE_PROXY_BLOCK + "mixed-port: 7890\nallow-lan: true\n",
             )
             assert saved.status_code == 200
             activated = await client.put("/api/panel/configs/custom/active")

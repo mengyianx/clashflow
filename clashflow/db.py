@@ -1,4 +1,11 @@
-"""Metadata store for ClashFlow's `/data` volume (subscriptions, configs, active record)."""
+"""Metadata store for ClashFlow's `/data` volume (subscriptions, configs, active record).
+
+The database carries a schema version in `PRAGMA user_version` (ADR-0006):
+`clashflow.migrate` reads it, backs the volume up and runs the ordered chain,
+and refuses a volume stamped by a newer image. The migration is the ONLY
+applier of the schema; `MetadataStore` opens a database that is already
+current.
+"""
 
 import json
 import sqlite3
@@ -12,47 +19,61 @@ DEFAULT_CONFIG_KIND = "hand-written"
 # hard-codes the literal.
 SUBSCRIPTION_DERIVED_KIND = "subscription-derived"
 
-_SCHEMA = """
+_SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """
 CREATE TABLE IF NOT EXISTS configs (
     name TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('hand-written', 'subscription-derived')),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+)
+""",
+    """
 CREATE TABLE IF NOT EXISTS active_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     name TEXT NOT NULL REFERENCES configs(name)
-);
+)
+""",
+    """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
-);
--- The single global Overlay (ADR-0004): one row, JSON in `data`, replace
--- semantics. Sparse on purpose — an absent key is not owned and the Source
--- Config's value passes through. The schema version chain (#38) migrates the
--- record; CREATE TABLE IF NOT EXISTS keeps a V1 volume readable until then.
+)
+""",
+    # The single global Overlay (ADR-0004): one row, JSON in `data`, replace
+    # semantics. Sparse on purpose — an absent key is not owned and the Source
+    # Config's value passes through.
+    """
 CREATE TABLE IF NOT EXISTS overlay (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL
-);
--- One row per Subscription (ticket #12). The name is both the Subscription
--- identity and its Subscription-derived Config's name (plan §3); plain
--- columns keep the table ALTER-TABLE-extensible.
+)
+""",
+    # One row per Subscription (ticket #12). The name is both the Subscription
+    # identity and its Subscription-derived Config's name (plan §3); plain
+    # columns keep the table ALTER-TABLE-extensible.
+    """
 CREATE TABLE IF NOT EXISTS subscriptions (
     name TEXT PRIMARY KEY,
     url TEXT NOT NULL,
     last_refresh_at TEXT,
     last_error TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-"""
+)
+""",
+)
+
+# The schema version this image writes and understands (`PRAGMA user_version`,
+# ADR-0006). A volume stamped higher was written by a newer image and refuses
+# to start; a lower one is backed up and migrated (clashflow.migrate).
+SCHEMA_VERSION = 1
 
 # Additive schema for `subscriptions` (ticket #13), applied with
 # ALTER TABLE ... ADD COLUMN after the base schema. NULL is the documented
 # fallback: NULL user_agent -> the module default UA on fetches,
 # NULL update_interval_minutes -> the global default interval (plan §1: 24h,
 # DEFAULT_UPDATE_INTERVAL_MINUTES in clashflow.refresh, consumed by #16's
-# scheduler). Later tickets APPEND to this tuple — never edit _SCHEMA's
-# CREATE TABLE body, databases from earlier tickets migrate in place.
+# scheduler). Later tickets APPEND to this tuple — never edit a
+# _SCHEMA_STATEMENTS body, databases from earlier tickets migrate in place.
 _ADDITIVE_SUBSCRIPTION_COLUMNS = (
     "user_agent TEXT",
     "update_interval_minutes INTEGER",
@@ -63,6 +84,23 @@ _ADDITIVE_SUBSCRIPTION_COLUMNS = (
     # registration). The raw error text lives in `last_error` beside it.
     "last_error_class TEXT",
 )
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """Apply the baseline schema and the additive columns; migration step 1.
+
+    Idempotent and version-free on purpose: it is what a V1 volume's migration
+    runs (clashflow.migrate stamps the version afterwards), and it is also
+    what a direct `MetadataStore` open applies so a test or a script can build
+    a store without going through the volume migration. Every statement is an
+    `IF NOT EXISTS` or a conditional `ALTER TABLE`, so running it twice never
+    changes anything."""
+    for statement in _SCHEMA_STATEMENTS:
+        conn.execute(statement)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(subscriptions)")}
+    for column in _ADDITIVE_SUBSCRIPTION_COLUMNS:
+        if column.split()[0] not in existing:
+            conn.execute(f"ALTER TABLE subscriptions ADD COLUMN {column}")
 
 
 class ConfigError(Exception):
@@ -128,13 +166,13 @@ def validate_config_name(name: str) -> str:
 
 class MetadataStore:
     def __init__(self, db_path: Path) -> None:
+        """Open a database the volume migration already brought to
+        `SCHEMA_VERSION` (`clashflow.migrate.open_metadata_store` is the
+        supported way to get here).
+
+        The schema is deliberately NOT applied on open: one applier only, so
+        an older step can never run over a volume a newer image migrated."""
         self._conn = sqlite3.connect(db_path)
-        self._conn.executescript(_SCHEMA)
-        existing = {row[1] for row in self._conn.execute("PRAGMA table_info(subscriptions)")}
-        for column in _ADDITIVE_SUBSCRIPTION_COLUMNS:
-            if column.split()[0] not in existing:
-                self._conn.execute(f"ALTER TABLE subscriptions ADD COLUMN {column}")
-        self._conn.commit()
 
     def register_config(self, name: str, kind: str) -> None:
         """Boot-time ensure: register the name unless it already exists."""

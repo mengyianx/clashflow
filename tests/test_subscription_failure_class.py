@@ -20,11 +20,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from conftest import origin_server
+from conftest import PROBE_PROXY_BLOCK, origin_server
 
 from clashflow.apply import HotApplyError
 
-SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
+SUB_V1 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7892\nallow-lan: true\n"
 # Unparseable YAML: the fetched bytes never reach the Kernel — the render
 # pipeline's key-merge stage rejects them as `render-failed`.
 SUB_INVALID_YAML = b"proxies: [\n"
@@ -211,9 +211,12 @@ async def test_booting_on_a_pre_change_database_keeps_the_records_and_adds_the_c
         assert (await _entry(panel, "prov"))["last_error_class"] == "network"
 
     # Rewrite the database file into its pre-change shape: the same schema
-    # without the failure-class column.
+    # without the failure-class column, and unstamped — that column arrived
+    # together with schema v1, so a database without it is a V1-volume-era
+    # database as far as the version gate is concerned.
     conn = sqlite3.connect(data / "clashflow.db")
     conn.execute("ALTER TABLE subscriptions DROP COLUMN last_error_class")
+    conn.execute("PRAGMA user_version = 0")
     conn.commit()
     conn.close()
 

@@ -15,11 +15,11 @@ from typing import Any
 
 import httpx
 import pytest
-from conftest import origin_server
+from conftest import PROBE_PROXY_BLOCK, origin_server
 
-SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
-SUB_V2 = b"mixed-port: 7893\nallow-lan: true\n"
-SUB_PLAIN_V2 = b"mixed-port: 7894\nallow-lan: true\n"
+SUB_V1 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7892\nallow-lan: true\n"
+SUB_V2 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7893\nallow-lan: true\n"
+SUB_PLAIN_V2 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7894\nallow-lan: true\n"
 # Unparseable YAML: the fetched bytes reach the Kernel config-test and are
 # rejected, so the scheduled refresh fails as the validation-error class and
 # the previous Config must survive byte-identical.

@@ -8,7 +8,9 @@ raising a distinct exception that the API layer maps to a status code:
 - `network` (transport failure or non-2xx response) -> SubscriptionFetchError
 - `render-failed`: the fetched bytes cannot be rendered (unparseable YAML or a
   non-mapping document), refused by the key-merge stage -> RenderFailed, whose
-  message begins with the stage name
+  message begins with the stage name; or the render carries neither `proxies`
+  nor `proxy-providers` (an empty Subscription) -> RenderedConfigInvalid, the
+  panel's own words
 - `kernel-rejected`: the RENDERED Config is not a complete mihomo YAML, so the
   Kernel's config-test refuses it -> KernelRejected, carrying the Kernel's own
   output verbatim
@@ -36,6 +38,7 @@ import httpx
 from clashflow.apply import (
     HotApplyError,
     KernelRejected,
+    RenderedConfigInvalid,
     commit_rendered_config,
 )
 from clashflow.db import MetadataStore, runtime_config_path
@@ -125,7 +128,13 @@ async def refresh_subscription(
 # one tuple instead of re-listing the classes. `RenderFailed` is the
 # `render-failed` class (ADR-0004): the Source Config could not be rendered,
 # which covers malformed YAML and an unrenderable document shape.
-REFRESH_FAILURES = (SubscriptionFetchError, RenderFailed, KernelRejected, HotApplyError)
+REFRESH_FAILURES = (
+    SubscriptionFetchError,
+    RenderFailed,
+    RenderedConfigInvalid,
+    KernelRejected,
+    HotApplyError,
+)
 
 # The failure class of a failed refresh (ticket #27): the named class travels
 # with the raw error text from the shared dispatch below to the panel, so a
@@ -146,7 +155,9 @@ def failure_class_for(exc: Exception) -> str | None:
     claims no class."""
     if isinstance(exc, SubscriptionFetchError):
         return FAILURE_CLASS_NETWORK
-    if isinstance(exc, RenderFailed):
+    if isinstance(exc, (RenderFailed, RenderedConfigInvalid)):
+        # An unrenderable source and a render with nothing to proxy are both
+        # "the fetched bytes could not become a usable Config".
         return FAILURE_CLASS_RENDER_FAILED
     if isinstance(exc, KernelRejected):
         return FAILURE_CLASS_KERNEL_REJECTED
