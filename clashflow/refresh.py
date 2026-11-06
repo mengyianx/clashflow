@@ -120,12 +120,6 @@ FAILURE_CLASS_NETWORK = "network"
 FAILURE_CLASS_KERNEL_REJECTED = "kernel-rejected"
 FAILURE_CLASS_HOT_APPLY_REFUSED = "hot-apply-refused"
 
-FAILURE_CLASSES = (
-    FAILURE_CLASS_NETWORK,
-    FAILURE_CLASS_KERNEL_REJECTED,
-    FAILURE_CLASS_HOT_APPLY_REFUSED,
-)
-
 
 def failure_class_for(exc: Exception) -> str | None:
     """The failure class of a refresh failure: the named class of the three
