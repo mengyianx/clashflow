@@ -54,18 +54,31 @@ def add_explicit_link_and_summary(conn: sqlite3.Connection) -> None:
 
     The summary column stores the counts of the last successful validation as
     JSON, NULL until a commit reaches the Kernel.
+
+    Idempotent like step 1: a column that already exists is not added again, so
+    a volume whose stored version lags its actual shape (a hand-edited or
+    restored database) still boots instead of failing on a duplicate column.
     """
-    conn.execute("ALTER TABLE subscriptions ADD COLUMN config_name TEXT REFERENCES configs(name)")
+    if "config_name" not in _columns(conn, "subscriptions"):
+        conn.execute(
+            "ALTER TABLE subscriptions ADD COLUMN config_name TEXT REFERENCES configs(name)"
+        )
     conn.execute(
         "UPDATE subscriptions SET config_name = name"
-        " WHERE EXISTS (SELECT 1 FROM configs WHERE configs.name = subscriptions.name)"
+        " WHERE config_name IS NULL"
+        " AND EXISTS (SELECT 1 FROM configs WHERE configs.name = subscriptions.name)"
     )
     # One Config, one owner: NULL links (a vanished Config) may repeat, a real
     # link may not.
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_config_name ON subscriptions(config_name)"
     )
-    conn.execute("ALTER TABLE configs ADD COLUMN summary TEXT")
+    if "summary" not in _columns(conn, "configs"):
+        conn.execute("ALTER TABLE configs ADD COLUMN summary TEXT")
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
 # Version -> the step that takes a database FROM `version - 1` TO `version`.

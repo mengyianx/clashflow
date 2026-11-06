@@ -30,16 +30,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { api, type ConfigEntry, type ConfigSummary } from "@/lib/api";
+import { api, type ConfigEntry } from "@/lib/api";
 import { CONFIG_KIND_LABEL } from "@/lib/messages";
+import { formatSummary } from "@/lib/utils";
 
 type CreateMode = { template: boolean } | null;
-
-/** What the Config contains, as of the last validation the panel accepted. */
-function summaryLine(summary: ConfigSummary | null): string {
-  if (!summary) return "—";
-  return `${summary.nodes} 节点 · ${summary.groups} 组 · ${summary.rules} 规则`;
-}
 
 export function ConfigsPage() {
   const navigate = useNavigate();
@@ -190,12 +185,7 @@ export function ConfigsPage() {
                 <TableCell className="text-ink-3">{CONFIG_KIND_LABEL[config.kind]}</TableCell>
                 <TableCell className="font-mono text-xs text-ink-3">{config.filename}</TableCell>
                 <TableCell className="text-xs text-ink-3">
-                  {summaryLine(config.summary)}
-                  {config.summary?.age_key_missing ? (
-                    <Badge variant="warn" className="ml-1.5">
-                      缺 Age key
-                    </Badge>
-                  ) : null}
+                  {formatSummary(config.summary)}
                 </TableCell>
                 <TableCell>
                   {config.active ? <Badge variant="ok">当前配置</Badge> : <Badge>—</Badge>}
@@ -247,8 +237,7 @@ export function ConfigsPage() {
               {CONFIG_KIND_LABEL[config.kind]} · <span className="font-mono">{config.filename}</span>
             </p>
             <p className="mt-1 text-xs text-ink-3">
-              {summaryLine(config.summary)}
-              {config.summary?.age_key_missing ? " · 缺 Age key" : ""}
+              {formatSummary(config.summary)}
             </p>
           </Card>
         ))}

@@ -149,6 +149,9 @@ async def test_a_subscription_refresh_updates_the_linked_config_summary(boot_app
             ).status_code == 201
             listed = {c["name"]: c for c in (await panel.client.get("/api/panel/configs")).json()}
             assert listed["prov"]["summary"]["nodes"] == 1
+            # The Subscriptions view reads the same summary through the link.
+            entry = (await panel.client.get("/api/panel/subscriptions")).json()[0]
+            assert entry["summary"]["nodes"] == 1
 
             origin.state["body"] = TWO_PROXIES
             assert (
@@ -156,6 +159,13 @@ async def test_a_subscription_refresh_updates_the_linked_config_summary(boot_app
             ).status_code == 200
         listed = {c["name"]: c for c in (await panel.client.get("/api/panel/configs")).json()}
         assert listed["prov"]["summary"] == {
+            "nodes": 2,
+            "groups": 0,
+            "rules": 0,
+            "age_key_missing": False,
+        }
+        entry = (await panel.client.get("/api/panel/subscriptions")).json()[0]
+        assert entry["summary"] == {
             "nodes": 2,
             "groups": 0,
             "rules": 0,

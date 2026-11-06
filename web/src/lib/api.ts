@@ -90,6 +90,9 @@ export interface SubscriptionEntry {
   config_name: string | null;
   config: string | null;
   state: SubscriptionState;
+  /** The linked Source Config's summary (issue #43), so the Subscriptions
+   * view can show what this Subscription currently delivers. */
+  summary: ConfigSummary | null;
   last_refresh_at: string | null;
   last_error: string | null;
   /** The class of the last failed refresh; null when the failure was outside

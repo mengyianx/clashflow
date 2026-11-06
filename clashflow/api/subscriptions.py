@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-type SubscriptionEntry = dict[str, str | int | None]
+type SubscriptionEntry = dict[str, object]
 
 
 class NewSubscription(BaseModel):

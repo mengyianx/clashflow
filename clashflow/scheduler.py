@@ -55,7 +55,7 @@ DEFAULT_TICK_SECONDS = 60.0
 
 # One Subscription entry as the store reports it; the columns consumed here
 # are typed by hand because the store's entry type is a flat dict.
-type SubscriptionEntry = dict[str, str | int | None]
+type SubscriptionEntry = dict[str, object]
 
 
 class SubscriptionScheduler:

@@ -296,17 +296,19 @@ class MetadataStore:
             raise SubscriptionAlreadyExists(name) from exc
         self._conn.commit()
 
-    def get_subscription(self, name: str) -> dict[str, str | int | None]:
+    def get_subscription(self, name: str) -> dict[str, object]:
         row = self._conn.execute(
-            _SELECT_SUBSCRIPTION + " WHERE name = ?",
+            _SELECT_SUBSCRIPTION + " WHERE s.name = ?",
             (name,),
         ).fetchone()
         if row is None:
             raise SubscriptionNotFound(name)
         return _subscription_entry(row)
 
-    def list_subscriptions(self) -> list[dict[str, str | int | None]]:
-        rows = self._conn.execute(_SELECT_SUBSCRIPTION + " ORDER BY created_at, name").fetchall()
+    def list_subscriptions(self) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            _SELECT_SUBSCRIPTION + " ORDER BY s.created_at, s.name"
+        ).fetchall()
         return [_subscription_entry(row) for row in rows]
 
     def set_subscription_fetch_settings(
@@ -376,8 +378,12 @@ _SELECT_CONFIG = (
 )
 
 _SELECT_SUBSCRIPTION = (
-    "SELECT name, url, last_refresh_at, last_error, user_agent, update_interval_minutes,"
-    " last_error_class, config_name FROM subscriptions"
+    # The subscription plus the summary of the Source Config it links to (the
+    # panel shows the owned Config's contents in the Subscriptions view).
+    # Columns are qualified because the join brings in a second `created_at`.
+    "SELECT s.name, s.url, s.last_refresh_at, s.last_error, s.user_agent,"
+    " s.update_interval_minutes, s.last_error_class, s.config_name, c.summary"
+    " FROM subscriptions s LEFT JOIN configs c ON c.name = s.config_name"
 )
 
 
@@ -402,8 +408,10 @@ def _utc_now() -> str:
 
 
 def _subscription_entry(
-    row: tuple[str, str, str | None, str | None, str | None, int | None, str | None, str | None],
-) -> dict[str, str | int | None]:
+    row: tuple[
+        str, str, str | None, str | None, str | None, int | None, str | None, str | None, str | None
+    ],
+) -> dict[str, object]:
     (
         name,
         url,
@@ -413,6 +421,7 @@ def _subscription_entry(
         update_interval_minutes,
         last_error_class,
         config_name,
+        summary,
     ) = row
     # State is derived, never stored: a failure shows until the next success;
     # a never-refreshed Subscription is "pending", not "ok".
@@ -442,4 +451,7 @@ def _subscription_entry(
         # fallback (module default UA; global default interval for #16).
         "user_agent": user_agent,
         "update_interval_minutes": update_interval_minutes,
+        # Issue #43: the linked Config's summary, so the Subscriptions view can
+        # show what the Subscription currently delivers without a second call.
+        "summary": json.loads(summary) if summary is not None else None,
     }
