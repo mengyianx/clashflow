@@ -13,6 +13,8 @@ before anything is forwarded, and keeps forwarding everything else."""
 import json
 import socket
 from pathlib import Path
+from typing import Any
+from urllib.parse import unquote
 
 import httpx
 import pytest
@@ -25,6 +27,46 @@ CONTROLLER = "http://127.0.0.1:9090"
 # The panel-authored refusal (#25): English, naming the endpoint it refuses.
 # The Management Panel maps the prefix to its Chinese title (web/src/lib/messages.ts).
 REFUSAL = "endpoint not exposed by the Management Panel"
+
+
+async def _raw_request(
+    app: Any, method: str, target: str, cookie: str
+) -> tuple[int, dict[str, Any]]:
+    """Send a request whose target reaches the app verbatim.
+
+    The HTTP client rewrites dot segments on the way out (`/api/./restart`
+    becomes `/api/restart`), so a spelling that tries to smuggle a denied
+    endpoint past the proxy can only be delivered the way a socket delivers
+    it: undecoded, exactly as written.
+    """
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        # The ASGI server hands the app the decoded path, the raw one in
+        # raw_path (uvicorn unquotes the path it read off the socket).
+        "path": unquote(target),
+        "raw_path": target.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"panel"), (b"cookie", cookie.encode())],
+        "client": ("127.0.0.1", 54321),
+        "server": ("panel", 80),
+    }
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    await app(scope, receive, send)
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    body = b"".join(bytes(m.get("body", b"")) for m in sent if m["type"] == "http.response.body")
+    return int(start["status"]), json.loads(body or b"{}")
 
 
 async def test_rest_calls_through_panel_api_surface_reach_the_controller(boot_app) -> None:
@@ -259,6 +301,55 @@ async def test_proxy_refuses_put_configs_and_leaves_the_controller_config_alone(
         assert health.json()["active_config"] == "default"
 
 
+async def test_the_proxy_refuses_a_denied_endpoint_spelled_non_canonically(
+    boot_app,
+) -> None:
+    """A denied endpoint stays denied however the request spells it.
+
+    The proxy forwards the path it was given and the HTTP client upstream
+    resolves `.` and `..` segments: a request for `/api/./restart` would
+    reach the Kernel as `/restart` — the very endpoint the deny list
+    refuses. The spelling is refused at the proxy, before anything is
+    forwarded.
+    """
+    async with boot_app() as panel:
+        pid_before = panel.app.state.kernel.pid
+        # A second Config with a listener port of its own: the Kernel's own
+        # view tells "restarted on the boot Config" apart from "untouched".
+        created = await panel.client.post("/api/panel/configs", json={"name": "second"})
+        assert created.status_code == 201
+        saved = await panel.client.put(
+            "/api/panel/configs/second",
+            content="mixed-port: 17891\nallow-lan: true\n",
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+        )
+        assert saved.status_code == 200
+        activated = await panel.client.put("/api/panel/configs/second/active")
+        assert activated.status_code == 200
+        version_before = (await panel.client.get("/api/version")).json()
+
+        cookie = "; ".join(f"{name}={value}" for name, value in panel.client.cookies.items())
+        for target in (
+            "/api/./restart",
+            "/api/%2e%2e/restart",
+            "/api//restart",
+            "/api/configs/../restart",
+        ):
+            status, body = await _raw_request(panel.app, "POST", target, cookie)
+            assert status == 403, (target, body)
+            assert body["detail"].startswith(REFUSAL), (target, body)
+
+        # Nothing was forwarded: the same Kernel process, the same version,
+        # still running the Active Config the panel reports.
+        assert panel.app.state.kernel.pid == pid_before
+        assert (await panel.client.get("/api/version")).json() == version_before
+        assert (await panel.client.get("/api/configs")).json()["mixed-port"] == 17891
+        health = await panel.client.get("/api/service/health")
+        assert health.status_code == 200
+        assert health.json()["active_config"] == "second"
+        assert health.json()["kernel"] == "up"
+
+
 async def test_websocket_route_refuses_the_denied_paths(boot_app) -> None:
     """The WebSocket route applies the same check before it attempts the
     upstream handshake: the close code is the policy refusal (1008), not the
@@ -307,3 +398,13 @@ async def test_proxy_still_forwards_the_controller_endpoints_the_runtime_dashboa
         restored = await panel.client.patch("/api/configs", json={"mode": "rule"})
         assert restored.status_code == 204
         assert (await panel.client.get("/api/configs")).json()["mode"] == "rule"
+
+        # A canonical path stays canonical whatever else it carries: a query
+        # string and a trailing slash are legitimate spellings and still
+        # reach the Controller.
+        with_query = await panel.client.get("/api/version?foo=bar")
+        assert with_query.status_code == 200
+        assert with_query.json()["meta"] is True
+        trailing = await panel.client.get("/api/proxies/")
+        assert trailing.status_code in (200, 301)
+        assert REFUSAL not in trailing.text

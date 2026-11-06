@@ -18,6 +18,11 @@ Routing convention (the shipped namespaces):
   `/api/upgrade`, `/api/configs`) are refused here, before any upstream
   request is made, so a denied endpoint cannot half-apply. `PATCH /configs`
   (the mode switch both Runtime Dashboards drive) stays available.
+- The request path is canonicalised before that check (percent-decoding, dot
+  segments): only a canonical path is forwarded, so a denied endpoint cannot
+  be smuggled past the list by spelling it differently (`/api/./restart`,
+  `/api/%2e%2e/restart`, `/api/configs/../restart`) — the spelling the list
+  matches is then the spelling the Kernel would see.
 - The Bearer secret is injected server-side on every upstream request and
   WebSocket handshake; browser-supplied credentials (`Authorization` header and
   `token` query parameter) are discarded, so no browser traffic carries the
@@ -26,7 +31,8 @@ Routing convention (the shipped namespaces):
 
 import asyncio
 import logging
-from urllib.parse import urlencode
+import posixpath
+from urllib.parse import unquote, urlencode
 
 import httpx
 import websockets
@@ -97,11 +103,35 @@ def _controller_path(path: str) -> str:
     return path.strip("/")
 
 
+def _canonical_path(path: str) -> str:
+    """The canonical form of a request path: percent-decoded, dot segments
+    resolved, no surrounding slashes.
+
+    The proxy forwards the path it was given, and the HTTP client upstream
+    resolves `.` and `..` segments on the way out: a request for
+    `/api/./restart` would reach the Kernel as `/restart` — the very
+    endpoint the deny list refuses. Canonicalising first makes the spelling
+    the deny list matches the spelling the Kernel would see.
+    """
+    decoded = unquote(path.strip("/"))
+    return posixpath.normpath(f"/{decoded}").strip("/")
+
+
 def _denied(method: str | None, path: str) -> bool:
     """The one decision point of the deny list: True when the request is
-    refused. `method` is None for the WebSocket route, which carries no method
-    of its own and therefore refuses every denied path."""
-    refused = DENIED_ENDPOINTS.get(_controller_path(path))
+    refused.
+
+    The path is canonicalised first, and a path that changes under that
+    normalisation is refused outright: only a canonical path is forwarded,
+    so a denied endpoint cannot be smuggled past the list by spelling it
+    differently. `method` is None for the WebSocket route, which carries no
+    method of its own and therefore refuses every denied path.
+    """
+    requested = _controller_path(path)
+    canonical = _canonical_path(path)
+    if canonical != requested:
+        return True
+    refused = DENIED_ENDPOINTS.get(canonical)
     if refused is None:
         return False
     return method is None or method.upper() in refused
