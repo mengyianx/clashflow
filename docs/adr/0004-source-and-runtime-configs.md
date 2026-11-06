@@ -10,7 +10,7 @@ ADR-0001 的前提是「磁盘上的 Config 就是内核跑的那份」。V2 要
 - **Runtime Config（运行配置）**：内核实际跑的文件，落在 `/data/runtime-configs/<name>.yaml`，文件名由源配置名确定性派生（`/data/runtime/` 已被 Runtime Update 的安装目录占用，不复用）。内核的 `-f` 只能指向它，不指向源。运行配置不承载用户内容，删掉会被下次渲染重建。
 - **Overlay（网关覆盖）**：全局一份，不分配置（网关属性与配置无关），存在 `clashflow.db`；面板编辑，另提供 YAML 导出/导入以便备份与手工审阅。
 - **面板恒胜**：Overlay 显式拥有的键在渲染时覆盖源配置的同名字段；编辑器对源里被覆盖的键标「已覆盖」。未被 Overlay 拥有的键原样透传。
-- **键集是最小闭包**：`tun`（`enable`/`stack`/`auto-route`/`auto-redirect`/`dns-hijack`/`strict-route`）、`dns`（`enable`/`listen`/`fake-ip-range`/`enhanced-mode`/`nameserver`/`fallback`）、端口（`mixed-port`/`allow-lan`/`bind-address`）、`log-level`。`external-controller` 与 `secret` 仍由命令行钉死，不属 Overlay。
+- **键集是最小闭包**（2.1 由 [ADR-0007](0007-replace-openclash.md) 扩到 OpenClash 全量键组）：`tun`（`enable`/`stack`/`auto-route`/`auto-redirect`/`dns-hijack`/`strict-route`）、`dns`（`enable`/`listen`/`fake-ip-range`/`enhanced-mode`/`nameserver`/`fallback`）、端口（`mixed-port`/`allow-lan`/`bind-address`）、`log-level`。`external-controller` 与 `secret` 仍由命令行钉死，不属 Overlay。
 - **渲染是纯函数**：`render(source_bytes, overlay) → runtime_bytes`，同样输入必出逐字节相同的输出。保存、切配置、订阅刷新三条路径共用它。
 - **渲染在校验之前**：管线变成 `源 bytes → render → mihomo -t 校验 → 原子替换运行配置 → 是 Active 则热载`。校验对象只有运行配置；源本身不可解析或与 Overlay 结构冲突，归入新的失败类别 `render-failed`。
 - **运行配置只读**：面板可预览，并显示与源配置的 diff；不可编辑。要改就改源或改 Overlay。

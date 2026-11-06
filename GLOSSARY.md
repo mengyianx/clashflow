@@ -32,9 +32,14 @@ _中文_: 镜像基线
 _Avoid_: default version
 
 **Subscription**:
-A remote URL that yields a complete mihomo YAML; ClashFlow fetches it to refresh exactly one Source Config.
+One or more remote URLs that, together, yield exactly one Source Config whenever ClashFlow refreshes it.
 _中文_: 订阅
 _Avoid_: sub, feed
+
+**Subscription Conversion**:
+The step that turns what a Subscription returns — share links, a base64 list, or a full YAML — into a complete mihomo YAML.
+_中文_: 订阅转换
+_Avoid_: sub conversion, link parsing
 
 **Source Config**:
 A mihomo YAML owned by the user and edited in the Management Panel; a Subscription refresh rewrites exactly one Source Config verbatim.
@@ -47,7 +52,7 @@ _中文_: 运行配置
 _Avoid_: effective config, generated config, final config
 
 **Overlay**:
-The single panel-owned set of gateway-level settings — TUN Mode, DNS, ports, log level — whose keys win over a Source Config's at render time.
+The single panel-owned set of settings applied over every Source Config at render time — gateway concerns (TUN Mode, DNS, ports, log level) and the override modules — whose keys win over the Source Config's.
 _中文_: 网关覆盖
 _Avoid_: override, overwrite layer, merge layer
 
@@ -72,7 +77,7 @@ _中文_: TUN 模式
 _Avoid_: transparent proxy, gateway mode, tun2socks
 
 **Failure Class**:
-The named category of a failed Subscription refresh — `network`, `kernel-rejected`, `hot-apply-refused` or `render-failed` — carried beside the raw error text so a self-hoster can tell where the refresh failed without reading the Kernel's English output.
+The named category of a failed Subscription refresh — `network`, `conversion-failed`, `kernel-rejected`, `hot-apply-refused` or `render-failed` — carried beside the raw error text so a self-hoster can tell where the refresh failed without reading the Kernel's English output.
 _中文_: 失败类别
 _Avoid_: error kind, error type
 
@@ -85,3 +90,8 @@ _Avoid_: 9090 API
 ClashFlow's authority over the Kernel process lifecycle, over rendering a Source Config into a Runtime Config, and over applying a Runtime Config to the Kernel.
 _中文_: 服务控制
 _Avoid_: service management
+
+**Watchdog**:
+ClashFlow's periodic probing of the Kernel — process liveness, TUN device and routes, outbound connectivity, DNS resolution — that restarts it after repeated failures.
+_中文_: 看门狗
+_Avoid_: health check, monitor
