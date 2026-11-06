@@ -7,6 +7,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { SessionProvider, useSession } from "@/lib/session";
 import { ConfigsPage } from "@/pages/ConfigsPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { OverlayPage } from "@/pages/OverlayPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { SubscriptionsPage } from "@/pages/SubscriptionsPage";
 import { SystemPage } from "@/pages/SystemPage";
@@ -14,6 +15,9 @@ import { SystemPage } from "@/pages/SystemPage";
 // CodeMirror is the heaviest dependency and only the editor route needs it.
 const EditorPage = lazy(() =>
   import("@/pages/EditorPage").then((module) => ({ default: module.EditorPage })),
+);
+const RuntimePage = lazy(() =>
+  import("@/pages/RuntimePage").then((module) => ({ default: module.RuntimePage })),
 );
 
 function AppRoutes() {
@@ -32,6 +36,15 @@ function AppRoutes() {
           <Route element={<AppShell theme={theme} onToggleTheme={toggle} />}>
             <Route path="/overview" element={<OverviewPage />} />
             <Route path="/configs" element={<ConfigsPage />} />
+            <Route path="/overlay" element={<OverlayPage />} />
+            <Route
+              path="/configs/:name/runtime"
+              element={
+                <Suspense fallback={<p className="text-sm text-ink-3">正在加载运行配置…</p>}>
+                  <RuntimePage />
+                </Suspense>
+              }
+            />
             <Route
               path="/configs/:name"
               element={

@@ -10,12 +10,13 @@ Subscription and its Config are therefore created, refreshed and deleted as
 a pair — a registered Subscription always has exactly one Config.
 
 Failure classes map to status codes like the save pipeline: a fetch failure
--> 502, a Kernel config-test rejection -> 400 with the Kernel's output
-verbatim. Adding fetches through the same pipeline and rolls both records
-back on any failure, so a failed add creates nothing. A failed refresh keeps
-the previous Config file byte-identical and marks the Subscription with the
-reason (`last_error`) and its failure class (`last_error_class`, ticket #27)
-for the next scheduled retry (#13).
+-> 502, a render-stage or Kernel config-test refusal -> 400 (the render
+message begins with the stage name; the Kernel's output is verbatim). Adding
+fetches through the same pipeline and rolls both records back on any failure,
+so a failed add creates nothing. A failed refresh keeps the previous Source
+Config and Runtime Config bytes byte-identical and marks the Subscription with
+the reason (`last_error`) and its failure class (`last_error_class`, ticket
+#27) for the next scheduled retry (#13).
 """
 
 import logging
@@ -35,6 +36,7 @@ from clashflow.db import (
     SubscriptionAlreadyExists,
     SubscriptionNotFound,
     config_filename,
+    runtime_config_path,
     validate_config_name,
 )
 from clashflow.kernel import KernelManager
@@ -44,6 +46,7 @@ from clashflow.refresh import (
     mark_subscription_refresh_failed,
     refresh_subscription,
 )
+from clashflow.render import RenderFailed
 
 log = logging.getLogger(__name__)
 
@@ -118,10 +121,14 @@ async def add_subscription(request: Request, body: NewSubscription) -> Subscript
             body.url,
             target,
             apply_when_active=False,
+            overlay=store.get_overlay(),
         )
     except SubscriptionFetchError as exc:
         _rollback_pair(store, configs_dir, body.name)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except RenderFailed as exc:
+        _rollback_pair(store, configs_dir, body.name)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KernelRejected as exc:
         _rollback_pair(store, configs_dir, body.name)
         raise HTTPException(status_code=400, detail=exc.output) from exc
@@ -161,13 +168,14 @@ async def refresh_subscription_endpoint(request: Request, name: str) -> Subscrip
             url,
             target,
             apply_when_active=bool(active),
+            overlay=store.get_overlay(),
             user_agent=user_agent,
         )
     except REFRESH_FAILURES as exc:
         detail = mark_subscription_refresh_failed(store, name, exc)
-        # KernelRejected carries the Kernel's own output and maps to 400;
+        # Render and Kernel refusals are content problems and map to 400;
         # network and hot-apply refusals map to 502.
-        status = 400 if isinstance(exc, KernelRejected) else 502
+        status = 400 if isinstance(exc, (RenderFailed, KernelRejected)) else 502
         raise HTTPException(status_code=status, detail=detail) from exc
     store.mark_subscription_refreshed(name)
     log.info("refreshed subscription %s", name)
@@ -234,6 +242,7 @@ async def delete_subscription(request: Request, name: str) -> dict[str, str]:
     except ConfigNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     (configs_dir / config_filename(name)).unlink(missing_ok=True)
+    runtime_config_path(configs_dir.parent, name).unlink(missing_ok=True)
     store.remove_subscription(name)
     log.info("deleted subscription %s and its config", name)
     return {"deleted": name}
@@ -245,3 +254,4 @@ def _rollback_pair(store: MetadataStore, configs_dir: Path, name: str) -> None:
     store.remove_subscription(name)
     store.remove_config(name)
     (configs_dir / config_filename(name)).unlink(missing_ok=True)
+    runtime_config_path(configs_dir.parent, name).unlink(missing_ok=True)

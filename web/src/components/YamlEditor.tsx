@@ -39,9 +39,12 @@ const panelHighlight = HighlightStyle.define([
 export function YamlEditor({
   value,
   onChange,
+  readOnly = false,
 }: {
   value: string;
   onChange?: (next: string) => void;
+  /** The Runtime Config is a rendered artifact: shown, never edited. */
+  readOnly?: boolean;
 }) {
   const { theme } = useTheme();
   const extensions = useMemo(
@@ -55,10 +58,11 @@ export function YamlEditor({
       height="100%"
       theme={theme}
       extensions={extensions}
+      editable={!readOnly}
       basicSetup={{
         foldGutter: false,
-        highlightActiveLine: true,
-        highlightActiveLineGutter: true,
+        highlightActiveLine: !readOnly,
+        highlightActiveLineGutter: !readOnly,
         autocompletion: false,
       }}
       onChange={(next) => onChange?.(next)}

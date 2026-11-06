@@ -1,5 +1,6 @@
 """Metadata store for ClashFlow's `/data` volume (subscriptions, configs, active record)."""
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,14 @@ CREATE TABLE IF NOT EXISTS active_config (
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+-- The single global Overlay (ADR-0004): one row, JSON in `data`, replace
+-- semantics. Sparse on purpose — an absent key is not owned and the Source
+-- Config's value passes through. The schema version chain (#38) migrates the
+-- record; CREATE TABLE IF NOT EXISTS keeps a V1 volume readable until then.
+CREATE TABLE IF NOT EXISTS overlay (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    data TEXT NOT NULL
 );
 -- One row per Subscription (ticket #12). The name is both the Subscription
 -- identity and its Subscription-derived Config's name (plan §3); plain
@@ -95,6 +104,18 @@ def config_filename(name: str) -> str:
     resolved inside `/data/configs`. Registration validates names so the
     derivation can never escape that directory."""
     return f"{name}.yaml"
+
+
+# Rendered artifacts live beside the Source Configs, never INSIDE
+# `/data/runtime/` — that directory holds Runtime Update payloads (ADR-0003)
+# and the two must never be confused (ADR-0004).
+RUNTIME_CONFIGS_DIRNAME = "runtime-configs"
+
+
+def runtime_config_path(data_dir: Path, name: str) -> Path:
+    """Where the Kernel runs a Config from: `/data/runtime-configs/<name>.yaml`,
+    derived deterministically from the Source Config's name."""
+    return data_dir / RUNTIME_CONFIGS_DIRNAME / config_filename(name)
 
 
 def validate_config_name(name: str) -> str:
@@ -241,6 +262,19 @@ class MetadataStore:
         self._conn.execute(
             "UPDATE subscriptions SET last_error = ?, last_error_class = ? WHERE name = ?",
             (reason, failure_class, name),
+        )
+        self._conn.commit()
+
+    def get_overlay(self) -> dict[str, object]:
+        """The global Overlay; absent means the empty Overlay (own nothing)."""
+        row = self._conn.execute("SELECT data FROM overlay WHERE id = 1").fetchone()
+        return json.loads(row[0]) if row else {}
+
+    def set_overlay(self, values: dict[str, object]) -> None:
+        """Replace the Overlay wholesale (ADR-0004: replace semantics only)."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO overlay (id, data) VALUES (1, ?)",
+            (json.dumps(values, ensure_ascii=False),),
         )
         self._conn.commit()
 

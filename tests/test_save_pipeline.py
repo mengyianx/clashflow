@@ -5,10 +5,7 @@ Controller reverse proxy); the pinned Kernel is a real fixture observed
 through its Controller API and through real proxy traffic.
 """
 
-import asyncio
 import os
-import re
-import subprocess
 
 import httpx
 from conftest import origin_server
@@ -90,43 +87,30 @@ async def test_editor_can_load_the_raw_yaml_content(boot_app) -> None:
         assert "no such config" in resp.json()["detail"]
 
 
-async def test_saving_invalid_yaml_returns_kernel_error_verbatim_and_keeps_file(
-    boot_app, mihomo_bin
+async def test_saving_unparseable_yaml_reports_the_render_stage_and_keeps_both_files(
+    boot_app,
 ) -> None:
+    """Malformed YAML never reaches the Kernel's config-test: the key-merge
+    stage cannot parse it, so the failure is `render-failed` and the message
+    begins with the stage name (ADR-0004). Both files stay byte-identical."""
     async with boot_app() as panel:
-        target = panel.data_dir / "configs" / "default.yaml"
-        before = target.read_bytes()
+        source = panel.data_dir / "configs" / "default.yaml"
+        runtime = panel.data_dir / "runtime-configs" / "default.yaml"
+        source_before = source.read_bytes()
+        runtime_before = runtime.read_bytes()
         content = "mixed-port: 7890\nproxies: [\n"
-        tmp = panel.data_dir / "configs" / "default.yaml.tmp"
-
-        # Independent reproduction at the exact candidate path the panel
-        # validates: the Kernel's own output, to be compared verbatim
-        # (only the wall-clock log timestamp may differ between runs).
-        tmp.write_text(content)
-        proc = await asyncio.to_thread(
-            subprocess.run,
-            [mihomo_bin, "-d", str(panel.data_dir), "-t", "-f", str(tmp)],
-            capture_output=True,
-            check=False,
-        )
-        tmp.unlink()
-        assert proc.returncode == 1  # exit 1 = invalid (pinned Kernel)
 
         resp = await panel.client.put("/api/panel/configs/default", content=content)
         assert resp.status_code == 400
         detail = resp.json()["detail"]
+        assert detail.startswith("key-merge: ")
+        assert "not valid YAML" in detail
 
-        def without_timestamp(text: str) -> str:
-            return re.sub(r'time="[^"]*"', "time=<ts>", text)
-
-        expected = (proc.stdout + proc.stderr).decode()
-        assert without_timestamp(detail) == without_timestamp(expected)
-        # The banner names the validated candidate file, verbatim.
-        assert f"configuration file {tmp} test failed" in detail
-
-        # The stored Config stayed byte-identical; no temp residue.
-        assert target.read_bytes() == before
-        assert list(target.parent.glob("*.tmp")) == []
+        # Neither file was touched; no temp residue in either directory.
+        assert source.read_bytes() == source_before
+        assert runtime.read_bytes() == runtime_before
+        assert list(source.parent.glob("*.tmp")) == []
+        assert list(runtime.parent.glob("*.tmp")) == []
 
 
 async def test_failed_save_leaves_no_temp_residue(boot_app) -> None:
@@ -135,20 +119,21 @@ async def test_failed_save_leaves_no_temp_residue(boot_app) -> None:
         assert resp.status_code == 201
         configs_dir = panel.data_dir / "configs"
 
-        # Invalid content for a non-Active Config: refused by the Kernel,
-        # nothing written, no temp file survives the failed save.
+        # Invalid content for a non-Active Config: refused at the key-merge
+        # stage, nothing written, no temp file survives the failed save.
         resp = await panel.client.put(
             "/api/panel/configs/spare", content="mixed-port: 7890\nproxies: [\n"
         )
         assert resp.status_code == 400
-        assert "test failed" in resp.json()["detail"]
+        assert resp.json()["detail"].startswith("key-merge: ")
         assert list(configs_dir.glob("*.tmp")) == []
         assert (configs_dir / "spare.yaml").read_text() == "{}\n"
 
-        # An empty body is refused verbatim as well (the Kernel: "is empty").
+        # A zero-byte Source Config is not the empty mapping (`{}` is); it has
+        # no document to render, so the same stage refuses it.
         resp = await panel.client.put("/api/panel/configs/spare", content="")
         assert resp.status_code == 400
-        assert "is empty" in resp.json()["detail"]
+        assert resp.json()["detail"] == "key-merge: source must be a YAML mapping"
         assert list(configs_dir.glob("*.tmp")) == []
         assert (configs_dir / "spare.yaml").read_text() == "{}\n"
 
@@ -404,9 +389,9 @@ async def test_failed_switch_keeps_previous_active_recorded_and_running(boot_app
         resp = await panel.client.put("/api/panel/configs/stale/active")
         assert resp.status_code == 400
         detail = resp.json()["detail"]
-        assert "level=error" in detail  # the Kernel's own error line, verbatim
-        stale = panel.data_dir / "configs" / "stale.yaml"
-        assert f"configuration file {stale} test failed" in detail
+        # The switch renders the target first, so an unparseable Source Config
+        # is refused at the key-merge stage and never reaches the Kernel.
+        assert detail.startswith("key-merge: ")
 
         # The previous Active stays recorded, running, and serving.
         configs = (await panel.client.get("/api/panel/configs")).json()

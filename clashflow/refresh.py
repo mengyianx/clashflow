@@ -13,26 +13,32 @@ raising a distinct exception that the API layer maps to a status code:
 - `hot-apply-refused`: Controller refusal on the Active-Config hot-apply ->
   HotApplyError
 
-In every failure case the previous Config file stays byte-identical:
-`clashflow.apply.commit_config` only `os.replace`s after a successful
-config-test, and a Controller refusal on the forced hot-apply (HotApplyError)
-restores the pre-refresh bytes — the same implementation the save endpoint
-and the Active Config switch use — because the Kernel never left the old
-Config, so disk and running state stay consistent.
+A refresh keeps its old promise — the fetched bytes are written to the
+Source Config verbatim — and then renders that Source into the Runtime Config
+the Kernel runs (ADR-0004), so the Overlay still wins at runtime. The render
+and the config-test both run BEFORE anything is written: a render failure
+(`render-failed`, naming its stage) or a Kernel refusal (`kernel-rejected`)
+leaves the previous Source and Runtime Config bytes byte-identical. A
+Controller refusal on the forced hot-apply (`hot-apply-refused`) puts both
+pre-refresh states back through the shared pipeline, because the Kernel never
+left the old Config.
 """
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from clashflow.apply import (
     HotApplyError,
     KernelRejected,
-    commit_config,
+    commit_rendered_config,
 )
-from clashflow.db import MetadataStore
+from clashflow.db import MetadataStore, runtime_config_path
 from clashflow.kernel import KernelManager
+from clashflow.render import RenderFailed
 
 log = logging.getLogger(__name__)
 
@@ -86,33 +92,38 @@ async def refresh_subscription(
     target: Path,
     *,
     apply_when_active: bool,
+    overlay: Mapping[str, Any],
     user_agent: str | None = None,
 ) -> None:
-    """Fetch and store one Subscription's Config: validate + atomic-swap via
-    the shared apply pipeline, then a forced hot-apply when this Config is
-    Active and the Kernel is up. If that hot-apply is refused, the pre-refresh
-    bytes are restored before re-raising (the shared `commit_config`):
-    the Kernel never left the old Config, so the failure classes leave the old
-    Config in place on disk too.
+    """Fetch a Subscription and store it: the fetched bytes go to the Source
+    Config verbatim, the Source + Overlay are rendered into the Runtime
+    Config, and the Runtime is hot-applied when this Config is Active and the
+    Kernel is up. A failure before the writes leaves both files
+    byte-identical; a refused hot-apply restores both pre-refresh states (the
+    shared `commit_rendered_config`).
     Pipeline exceptions propagate untouched for the API layer to surface
     verbatim."""
     content = await fetch_subscription(client, url, user_agent=user_agent)
-    await commit_config(
+    await commit_rendered_config(
         kernel_bin=kernel.binary,
         data_dir=kernel.data_dir,
         client=client,
         secret=secret,
-        target=target,
+        source_target=target,
+        runtime_target=runtime_config_path(kernel.data_dir, target.stem),
         content=content,
+        overlay=overlay,
         should_reload=lambda: apply_when_active and kernel.alive(),
     )
     log.info("refreshed Subscription-derived Config %s (%d bytes)", target.name, len(content))
 
 
-# The three failure classes of the refresh pipeline (each its own exception),
+# The failure classes of the refresh pipeline (each its own exception),
 # shared by the manual-refresh endpoint and the scheduler so both dispatch on
-# one tuple instead of re-listing the classes.
-REFRESH_FAILURES = (SubscriptionFetchError, KernelRejected, HotApplyError)
+# one tuple instead of re-listing the classes. `RenderFailed` is the
+# `render-failed` class (ADR-0004): the Source Config could not be rendered,
+# which covers malformed YAML and an unrenderable document shape.
+REFRESH_FAILURES = (SubscriptionFetchError, RenderFailed, KernelRejected, HotApplyError)
 
 # The failure class of a failed refresh (ticket #27): the named class travels
 # with the raw error text from the shared dispatch below to the panel, so a
@@ -121,6 +132,7 @@ REFRESH_FAILURES = (SubscriptionFetchError, KernelRejected, HotApplyError)
 # the Kernel is the only write-path validator, so unparseable content is a
 # config-test refusal like any other.
 FAILURE_CLASS_NETWORK = "network"
+FAILURE_CLASS_RENDER_FAILED = "render-failed"
 FAILURE_CLASS_KERNEL_REJECTED = "kernel-rejected"
 FAILURE_CLASS_HOT_APPLY_REFUSED = "hot-apply-refused"
 
@@ -132,6 +144,8 @@ def failure_class_for(exc: Exception) -> str | None:
     claims no class."""
     if isinstance(exc, SubscriptionFetchError):
         return FAILURE_CLASS_NETWORK
+    if isinstance(exc, RenderFailed):
+        return FAILURE_CLASS_RENDER_FAILED
     if isinstance(exc, KernelRejected):
         return FAILURE_CLASS_KERNEL_REJECTED
     if isinstance(exc, HotApplyError):
