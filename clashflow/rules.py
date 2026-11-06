@@ -13,7 +13,8 @@ are never mutated, so a stage can hand its argument on and still fail without
 having half-edited it. Behaviour follows the reference implementation the
 gateway is replacing (OpenClash's `yml_rules_change.sh`) where that behaviour
 is observable in the Kernel: the three bottom anchors, `/32` and `/128`
-padding, and dropping rules that point at a policy that does not exist.
+padding, dropping rules that point at a policy that does not exist, and the
+Kernel's own field grammar for which field of a rule is its policy.
 
 M1's scope (issue #39) is exactly these five: anchor insertion, rule-target
 validation, `IP-CIDR` padding, empty-group fallback and name de-duplication.
@@ -38,14 +39,22 @@ IP_RULE_TYPES: frozenset[str] = frozenset(
     {"IP-CIDR", "IP-CIDR6", "SRC-IP-CIDR", "SRC-IP-CIDR6", "IP-SUFFIX", "SRC-IP-SUFFIX"}
 )
 
-# Fields that may trail the policy on the same rule; the policy is then the
-# field before them.
-_MODIFIERS: frozenset[str] = frozenset({"no-resolve", "src"})
+# Types whose payload contains commas and which take no params: mihomo parses
+# them by taking the LAST field as the target and joining the rest as payload.
+_COMMA_PAYLOAD_TYPES: frozenset[str] = frozenset(
+    {
+        "NOT",
+        "OR",
+        "AND",
+        "SUB-RULE",
+        "DOMAIN-REGEX",
+        "PROCESS-NAME-REGEX",
+        "PROCESS-PATH-REGEX",
+    }
+)
 
-# Rule types whose policy is the second field. Every other type carries a
-# matching value first, so a rule with only two fields for them is a rule with
-# no policy at all (the Kernel reads that field as the value).
-_SHORT_RULE_TYPES: frozenset[str] = frozenset({"MATCH", "FINAL"})
+# `MATCH` (and the legacy `FINAL` alias) has no payload: the target is second.
+_TARGET_ONLY_TYPES: frozenset[str] = frozenset({"MATCH", "FINAL"})
 
 ANCHORS: tuple[str, ...] = ("top", "bottom")
 
@@ -93,18 +102,21 @@ def bottom_insert_index(rules: Sequence[str]) -> int:
 
 
 def rule_target(rule: str) -> str | None:
-    """The policy a rule routes to: its last field, or the field before a
-    trailing modifier (`no-resolve`, `src`). `MATCH`/`FINAL` carry the policy
-    as their second field; every other type carries a value there, so a rule
-    that runs out of fields has no policy and returns None."""
+    """The policy field, read exactly the way the Kernel reads it
+    (`rules/common.ParseRulePayload`): `MATCH`/`FINAL` carry it second, the
+    comma-payload types (`AND`/`OR`/`NOT`/`SUB-RULE`/`*-REGEX`) carry it last,
+    and every other type carries its payload second and the policy third —
+    what follows is params (`no-resolve`, `src`, ...), not a policy.
+
+    None when the rule is too short to carry a policy at all: the Kernel
+    refuses such a line as malformed instead of reading a value as a policy."""
     fields = [field.strip() for field in str(rule).split(",")]
-    while len(fields) > 1 and fields[-1].lower() in _MODIFIERS:
-        fields.pop()
-    if not fields or not fields[0]:
-        return None
-    if fields[0].upper() in _SHORT_RULE_TYPES:
-        return fields[1] if len(fields) >= 2 and fields[1] else None
-    return fields[-1] if len(fields) >= 3 and fields[-1] else None
+    rule_type = fields[0].upper() if fields else ""
+    if rule_type in _TARGET_ONLY_TYPES:
+        return fields[1] if len(fields) > 1 and fields[1] else None
+    if rule_type in _COMMA_PAYLOAD_TYPES:
+        return fields[-1] if len(fields) > 1 and fields[-1] else None
+    return fields[2] if len(fields) > 2 and fields[2] else None
 
 
 def known_targets(document: Mapping[str, Any]) -> set[str]:

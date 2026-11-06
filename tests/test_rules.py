@@ -109,14 +109,21 @@ def test_inserting_nothing_keeps_the_document_as_it_is() -> None:
 # --- rule targets ----------------------------------------------------------
 
 
-def test_a_rule_target_is_the_last_field_before_a_modifier() -> None:
+def test_a_rule_target_is_read_the_way_the_kernel_reads_it() -> None:
     assert rule_target("MATCH,DIRECT") == "DIRECT"
+    assert rule_target("FINAL,Proxy") == "Proxy"
+    # The policy is the third field; what follows is params, not a policy.
     assert rule_target("IP-CIDR,10.0.0.0/8,DIRECT,no-resolve") == "DIRECT"
+    assert rule_target("IP-CIDR,1.1.1.1/32,DIRECT,foo") == "DIRECT"
     assert rule_target("PROCESS-NAME,curl,DIRECT,src") == "DIRECT"
-    assert rule_target("DOMAIN-SUFFIX,a.example,Proxy") == "Proxy"
-    # A type that carries a value in its second field has no policy here: the
-    # trailing field is the value, not a policy.
+    # Comma-payload types carry the policy as their LAST field.
+    assert rule_target("AND,((DOMAIN,a),(DOMAIN,b)),Proxy") == "Proxy"
+    assert rule_target("SUB-RULE,(NETWORK,tcp),tail") == "tail"
+    assert rule_target("DOMAIN-REGEX,^abc.*com,Proxy") == "Proxy"
+    # Too short to carry a policy: the Kernel refuses these as malformed
+    # instead of reading the value as one.
     assert rule_target("DOMAIN,a.example") is None
+    assert rule_target("IP-CIDR,10.0.0.0/8") is None
     assert rule_target("MATCH") is None
     assert rule_target("") is None
 
