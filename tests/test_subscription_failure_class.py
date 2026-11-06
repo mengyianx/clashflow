@@ -7,17 +7,17 @@ HTTP API seam (and, for the migration, at the volume's database file); the
 pinned Kernel is a real fixture and the Subscription provider is a local HTTP
 origin, so runs are deterministic and offline.
 
-There is deliberately no invalid-YAML class: the Kernel is the only
-write-path validator, so unparseable content is a `kernel-rejected` failure
-like any other config-test refusal.
+There is deliberately no invalid-YAML class, and no assertion here reads the
+panel's source: the Kernel is the only write-path validator, so unparseable
+content reaches the Kernel's config-test and comes back as a
+`kernel-rejected` failure like any other config-test refusal. That is the
+behaviour the class assertions pin, at the API seam.
 """
 
 import asyncio
-import re
 import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -135,18 +135,6 @@ async def test_a_refused_hot_apply_is_recorded_as_the_hot_apply_refused_class(
         entry = await _entry(panel, "prov")
         assert entry["last_error_class"] == "hot-apply-refused"
         assert entry["last_error"] == "forced hot-apply failure"
-
-
-def test_the_panel_never_parses_yaml_itself() -> None:
-    # The Kernel is the only write-path validator: no module of the panel
-    # imports a YAML parser, so a failure class never depends on the panel
-    # reading the Config content itself.
-    import clashflow
-
-    package = Path(clashflow.__file__).parent
-    for path in sorted(package.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        assert not re.search(r"^\s*(?:import|from)\s+yaml\b", source, re.MULTILINE), path
 
 
 async def test_a_successful_refresh_clears_the_class_and_the_error_text(boot_app) -> None:
