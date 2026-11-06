@@ -12,7 +12,9 @@ export type SubscriptionState = "ok" | "error" | "pending";
 /** The class of the last failed Subscription refresh: `network` (transport
  * failure or non-2xx), `kernel-rejected` (the Kernel's config-test refused
  * the content) or `hot-apply-refused` (the Controller refused the forced
- * hot-apply). Null when there is no class to show. */
+ * hot-apply). Null when there is no class to show: the failure was outside
+ * the refresh pipeline (the Subscription's Config record had disappeared), or
+ * there was no failure at all. */
 export type SubscriptionFailureClass = "network" | "kernel-rejected" | "hot-apply-refused";
 
 export interface ServiceHealth {
@@ -40,8 +42,10 @@ export interface SubscriptionEntry {
   state: SubscriptionState;
   last_refresh_at: string | null;
   last_error: string | null;
-  /** The class of the last failed refresh; null for a Subscription that
-   * never failed and for a record written before the class existed. */
+  /** The class of the last failed refresh; null when the failure was outside
+   * the refresh pipeline (the Subscription's Config record had disappeared),
+   * for a Subscription that never failed, and for a record written before the
+   * class existed. */
   last_error_class: SubscriptionFailureClass | null;
   user_agent: string | null;
   update_interval_minutes: number | null;
