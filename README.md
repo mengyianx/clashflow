@@ -4,7 +4,7 @@
 
 ## 快速开始（从零到可用）
 
-GHCR 上的镜像包继承仓库的可见性：仓库为私有时镜像同样是私有的，拉取前先登录（PAT 需带 `read:packages` 权限）。镜像 tag `:latest` 指向最近一次手动发布的版本，不是 `flow` 分支的当前提交（见「CI：质量门、镜像与发版」）。
+GHCR 上的镜像包继承仓库的可见性：仓库为私有时镜像同样是私有的，拉取前先登录（PAT 需带 `read:packages` 权限）。镜像 tag `:latest` 指向最近一次手动发布的版本（当前已发布修订 `98764c8`），不是 `flow` 分支的当前提交（见「CI：质量门、镜像与发版」）。
 
 ```bash
 printf '%s' "$GHCR_PAT" | docker login ghcr.io -u <GitHub 用户名> --password-stdin
@@ -114,7 +114,7 @@ bash scripts/fetch-zui.sh             # zashboard 静态包（/zui/）
 gh workflow run image.yml --ref flow -f version=v1.1.0
 ```
 
-发版前先确认该 ref 的 `Checks` 为绿。产物：`ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`，多架构 `linux/amd64`、`linux/arm64`、`linux/arm/v7`，并生成同名 GitHub Release。`latest` 指向**最近一次手动发布的版本**（只有手动发版才更新它），不是 `flow` 分支的当前提交——`flow` 上有更新而未发版时，`latest` 仍是上一个发布版。前端与两套面板的产物在 runner 本机构建（`FROM --platform=$BUILDPLATFORM`），只有内核阶段走 QEMU。
+发版前先确认该 ref 的 `Checks` 为绿。产物：`ghcr.io/<owner>/<repo>:{vX.Y.Z, vX.Y, latest}`，多架构 `linux/amd64`、`linux/arm64`、`linux/arm/v7`，并生成同名 GitHub Release。`latest` 指向**最近一次手动发布的版本**（只有手动发版才更新它），不是 `flow` 分支的当前提交——`flow` 上有更新而未发版时，`latest` 仍是上一个发布版。当前 `latest` 镜像的 `org.opencontainers.image.revision` 标签是 `98764c8`：这就是它当前指向的已发布修订。前端与两套面板的产物在 runner 本机构建（`FROM --platform=$BUILDPLATFORM`），只有内核阶段走 QEMU。
 
 ## 限制与折衷（v1 明确取舍）
 
