@@ -11,10 +11,10 @@ deterministic and offline. UI rendering of the warning and the copy button is
 covered by a real-browser check (see the ticket report), not here.
 """
 
-from conftest import origin_server
+from conftest import PROBE_PROXY_BLOCK, origin_server
 
-SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
-SUB_V2 = b"mixed-port: 7893\nallow-lan: true\n"
+SUB_V1 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7892\nallow-lan: true\n"
+SUB_V2 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7893\nallow-lan: true\n"
 DEFAULT_USER_AGENT = "ClashFlow/0.1"
 
 

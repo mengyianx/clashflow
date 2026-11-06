@@ -20,11 +20,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from conftest import origin_server
+from conftest import PROBE_PROXY_BLOCK, origin_server
 
 from clashflow.apply import HotApplyError
 
-SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
+SUB_V1 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7892\nallow-lan: true\n"
 # Unparseable YAML: the fetched bytes never reach the Kernel — the render
 # pipeline's key-merge stage rejects them as `render-failed`.
 SUB_INVALID_YAML = b"proxies: [\n"

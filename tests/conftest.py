@@ -21,6 +21,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # logging in on their own client (e.g. a TestClient for WebSockets) use it too.
 TEST_PANEL_PASSWORD = "clashflow-test-panel-password"
 
+# A Source Config must carry `proxies` or `proxy-providers` before the apply
+# pipeline will write it (issue #36: an empty Subscription must never overwrite
+# a working Config). Tests that only care about gateway keys still need one
+# upstream to make their body a storable Config.
+PROBE_PROXY_BLOCK = (
+    "proxies:\n  - name: probe\n    type: http\n    server: 127.0.0.1\n    port: 1080\n"
+)
+
 type Panel = SimpleNamespace  # app, client, data_dir, password
 
 

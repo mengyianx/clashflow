@@ -18,7 +18,7 @@ from urllib.parse import unquote
 
 import httpx
 import pytest
-from conftest import TEST_PANEL_PASSWORD, lan_ip
+from conftest import PROBE_PROXY_BLOCK, TEST_PANEL_PASSWORD, lan_ip
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -81,7 +81,11 @@ async def test_rest_calls_through_panel_api_surface_reach_the_controller(boot_ap
 
 
 async def test_websocket_streams_pass_through_the_proxy(boot_app) -> None:
-    async with boot_app() as panel:
+    # The saved Config must carry a proxy (issue #36), so the boot Config this
+    # test re-saves through the panel does too.
+    async with boot_app(
+        config_body=PROBE_PROXY_BLOCK + "mixed-port: 7890\nallow-lan: true\n"
+    ) as panel:
         client = TestClient(panel.app)
         # #17: the WebSocket proxy requires a session like every panel route.
         login = client.post("/api/panel/auth/login", json={"password": TEST_PANEL_PASSWORD})
@@ -219,7 +223,7 @@ async def test_proxy_refuses_post_restart_and_keeps_the_kernel_on_the_active_con
         assert created.status_code == 201
         saved = await panel.client.put(
             "/api/panel/configs/second",
-            content="mixed-port: 17891\nallow-lan: true\n",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 17891\nallow-lan: true\n",
             headers={"Content-Type": "text/plain; charset=utf-8"},
         )
         assert saved.status_code == 200
@@ -320,7 +324,7 @@ async def test_the_proxy_refuses_a_denied_endpoint_spelled_non_canonically(
         assert created.status_code == 201
         saved = await panel.client.put(
             "/api/panel/configs/second",
-            content="mixed-port: 17891\nallow-lan: true\n",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 17891\nallow-lan: true\n",
             headers={"Content-Type": "text/plain; charset=utf-8"},
         )
         assert saved.status_code == 200

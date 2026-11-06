@@ -13,12 +13,12 @@ forced hot-apply of the Active Config).
 import contextlib
 import socket
 
-from conftest import origin_server
+from conftest import PROBE_PROXY_BLOCK, origin_server
 
 from clashflow.apply import HotApplyError
 
-SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
-SUB_V2 = b"mixed-port: 7893\nallow-lan: true\n"
+SUB_V1 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7892\nallow-lan: true\n"
+SUB_V2 = PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7893\nallow-lan: true\n"
 # Valid YAML, but the Kernel refuses the rendered Config: an unknown proxy
 # type (the `kernel-rejected` case).
 SUB_INVALID_TYPE = (
@@ -99,7 +99,9 @@ async def test_manual_refresh_replaces_only_the_subscription_derived_config_and_
             assert (await _add_subscription(panel, "prov", origin.url)).status_code == 201
             # A second Subscription-derived Config and a Hand-written Config
             # to witness byte-identity.
-            with origin_server(b"mixed-port: 7895\nallow-lan: true\n") as other:
+            with origin_server(
+                PROBE_PROXY_BLOCK.encode() + b"mixed-port: 7895\nallow-lan: true\n"
+            ) as other:
                 assert (await _add_subscription(panel, "other", other.url)).status_code == 201
             assert (
                 await panel.client.post("/api/panel/configs", json={"name": "spare"})

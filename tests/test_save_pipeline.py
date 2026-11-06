@@ -8,7 +8,7 @@ through its Controller API and through real proxy traffic.
 import os
 
 import httpx
-from conftest import origin_server
+from conftest import PROBE_PROXY_BLOCK, origin_server
 
 from clashflow.apply import HotApplyError
 
@@ -31,7 +31,7 @@ async def test_saving_valid_edit_to_active_config_hot_applies_without_restart(bo
         secret = panel.app.state.secret
         pid_before = panel.app.state.kernel.pid
 
-        content = "mixed-port: 7891\nallow-lan: true\n"
+        content = PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n"
         resp = await panel.client.put(
             "/api/panel/configs/default",
             content=content,
@@ -158,7 +158,8 @@ async def test_saving_the_active_config_with_a_refused_hot_apply_restores_the_pr
 
         monkeypatch.setattr("clashflow.apply.hot_apply", forced_hot_apply_failure)
         resp = await panel.client.put(
-            "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+            "/api/panel/configs/default",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n",
         )
         assert resp.status_code == 502
         assert resp.json()["detail"] == "forced hot-apply failure"
@@ -198,7 +199,8 @@ async def test_a_refused_hot_apply_leaves_an_absent_config_file_absent_again(
         # The file is gone before the save: there are no pre-save bytes.
         target.unlink()
         resp = await panel.client.put(
-            "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+            "/api/panel/configs/default",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n",
         )
         assert resp.status_code == 502
         assert resp.json()["detail"] == "forced hot-apply failure"
@@ -233,7 +235,8 @@ async def test_a_refused_hot_apply_restores_the_config_by_replacing_the_file(
         # A reader holding the Config file open across the refused save.
         with target.open("rb") as reader:
             resp = await panel.client.put(
-                "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+                "/api/panel/configs/default",
+                content=PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n",
             )
             assert resp.status_code == 502
 
@@ -269,7 +272,8 @@ async def test_the_refusal_answer_carries_the_controller_text_verbatim(
 
         monkeypatch.setattr(panel.app.state.api_client, "put", refusing_controller)
         resp = await panel.client.put(
-            "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
+            "/api/panel/configs/default",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n",
         )
         assert resp.status_code == 502
         assert resp.json()["detail"] == refusal
@@ -295,7 +299,7 @@ async def test_saving_a_non_active_config_stores_the_bytes_without_touching_the_
             applied.append(str(args))
 
         monkeypatch.setattr("clashflow.apply.hot_apply", recording_hot_apply)
-        content = "mixed-port: 7895\nallow-lan: true\n"
+        content = PROBE_PROXY_BLOCK + "mixed-port: 7895\nallow-lan: true\n"
         resp = await panel.client.put("/api/panel/configs/alt", content=content)
         assert resp.status_code == 200
         assert (panel.data_dir / "configs" / "alt.yaml").read_bytes() == content.encode()
@@ -321,7 +325,7 @@ async def test_saving_while_the_kernel_is_stopped_stores_the_bytes_for_the_next_
             applied.append(str(args))
 
         monkeypatch.setattr("clashflow.apply.hot_apply", recording_hot_apply)
-        content = "mixed-port: 7896\nallow-lan: true\n"
+        content = PROBE_PROXY_BLOCK + "mixed-port: 7896\nallow-lan: true\n"
         resp = await panel.client.put("/api/panel/configs/default", content=content)
         assert resp.status_code == 200
         assert (panel.data_dir / "configs" / "default.yaml").read_bytes() == content.encode()
@@ -341,7 +345,8 @@ async def test_switching_active_config_hot_applies_and_records_without_restart(b
         resp = await panel.client.post("/api/panel/configs", json={"name": "alt"})
         assert resp.status_code == 201
         resp = await panel.client.put(
-            "/api/panel/configs/alt", content="mixed-port: 7891\nallow-lan: true\n"
+            "/api/panel/configs/alt",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n",
         )
         assert resp.status_code == 200
         # Saving a non-Active Config stores it without touching the Kernel.
@@ -419,7 +424,8 @@ async def test_a_refused_hot_apply_keeps_the_previous_active_recorded_and_runnin
         resp = await panel.client.post("/api/panel/configs", json={"name": "alt"})
         assert resp.status_code == 201
         resp = await panel.client.put(
-            "/api/panel/configs/alt", content="mixed-port: 7891\nallow-lan: true\n"
+            "/api/panel/configs/alt",
+            content=PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n",
         )
         assert resp.status_code == 200
 
@@ -434,7 +440,7 @@ async def test_a_refused_hot_apply_keeps_the_previous_active_recorded_and_runnin
         # The switch writes nothing, so the file stays as it was: the restore
         # belongs to the write paths (the save and the refresh).
         assert (panel.data_dir / "configs" / "alt.yaml").read_text() == (
-            "mixed-port: 7891\nallow-lan: true\n"
+            PROBE_PROXY_BLOCK + "mixed-port: 7891\nallow-lan: true\n"
         )
 
         # The previous Active stays recorded, running, and serving.

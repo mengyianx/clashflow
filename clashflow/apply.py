@@ -18,6 +18,15 @@ file was gone, absent restoring as absent — so disk and the running Kernel
 stay consistent and the next restart does not boot bytes the Controller
 refused.
 
+Validation is the triple of ADR-0004/issue #36, and it runs on the RENDERED
+bytes, never on the Source Config: the bytes must parse as YAML, must carry
+`proxies` or `proxy-providers` (an empty Subscription must never overwrite a
+working Config with nothing to proxy), and the Kernel's `-t` check must accept
+them. The content check guards NEW content only — the Source Config switch,
+the Overlay re-render and the boot render re-use bytes that were already
+accepted (or that the panel authored itself, e.g. the empty and template
+Configs of ticket #11), so they are rendered and applied without re-checking.
+
 Pinned Kernel (v1.19.32) facts this module encodes:
 - `mihomo -d <home> -t -f <file>` exits 0 = valid, 1 = invalid; the error
   banner goes to STDOUT (logrus writes to os.Stdout), stderr stays empty —
@@ -39,11 +48,17 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
 from clashflow.kernel import CONTROLLER_ADDR
 from clashflow.render import DEFAULT_STAGES, Stage, render
 
 log = logging.getLogger(__name__)
+
+# The two keys a Config needs to have anything to proxy: a Config carrying
+# neither describes no upstream at all, so storing it would replace a working
+# Config with one that can only route everything DIRECT (issue #36).
+PROXY_KEYS = ("proxies", "proxy-providers")
 
 CONTROLLER_URL = f"http://{CONTROLLER_ADDR}"
 
@@ -57,6 +72,17 @@ class KernelRejected(Exception):
     def __init__(self, output: str) -> None:
         super().__init__(output)
         self.output = output
+
+
+class RenderedConfigInvalid(Exception):
+    """The rendered bytes are not a usable Config: they do not parse as YAML,
+    are not a mapping, or carry neither `proxies` nor `proxy-providers`. The
+    message names the failed check; nothing has been written when this is
+    raised, so both files stay byte-identical."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 class ConfigFileMissing(Exception):
@@ -106,6 +132,31 @@ async def validate_config(kernel_bin: str, data_dir: Path, config_file: Path) ->
     raise KernelRejected(
         stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
     )
+
+
+def validate_rendered_config(data: bytes) -> dict[str, Any]:
+    """The two local checks of the triple validation, on the RENDERED bytes.
+
+    (1) the YAML parses into a mapping, and (2) the document carries
+    `proxies` or `proxy-providers` — non-empty, because an "empty" list or
+    mapping is exactly what a dead Subscription returns, and that must never
+    replace a working Config. The third check is the Kernel's own `-t`
+    (validate_config); this one runs first so a content problem is reported
+    in the panel's words instead of the Kernel's English output, and so no
+    Kernel process is spawned for a document that cannot work. Returns the
+    parsed document for a caller that wants to inspect it further."""
+    try:
+        document = yaml.safe_load(data)
+    except yaml.YAMLError as exc:
+        raise RenderedConfigInvalid(f"rendered config is not valid YAML: {exc}") from exc
+    if not isinstance(document, Mapping):
+        raise RenderedConfigInvalid("rendered config must be a YAML mapping")
+    if not any(document.get(key) for key in PROXY_KEYS):
+        raise RenderedConfigInvalid(
+            "rendered config carries neither proxies nor proxy-providers: "
+            "refusing to store a config that has nothing to proxy"
+        )
+    return dict(document)
 
 
 def _write_atomic(target: Path, content: bytes) -> None:
@@ -186,10 +237,12 @@ async def commit_rendered_config(
     Config switch, an Overlay change) and only the Runtime Config is rebuilt.
 
     The Render Pipeline runs first and pure: a render failure (`RenderFailed`,
-    naming its stage) touches neither file. Then the RENDERED bytes are
-    validated by the Kernel — the Source Config is never what the Kernel
-    reads, so validating it would test the wrong document. Only then are the
-    files swapped in; a refused hot-apply puts both pre-write states back.
+    naming its stage) touches neither file. Then the RENDERED bytes pass the
+    triple validation — YAML parses, `proxies`/`proxy-providers` present (new
+    content only), and the Kernel's `-t` — because the Source Config is never
+    what the Kernel reads, so validating it would test the wrong document.
+    Only then are the files swapped in; a refused hot-apply puts both
+    pre-write states back.
 
     `should_reload` is asked at the moment of the reload, not when the request
     arrived: validation can take seconds (the config-test may download GEO
@@ -211,6 +264,12 @@ async def commit_rendered_config(
         source_bytes = content
 
     runtime_bytes = render(source_bytes, overlay, stages=stages)
+    if not isinstance(content, Unwritten):
+        # New content must prove it is a usable Config before anything is
+        # written. `Unwritten` re-renders bytes that were accepted when they
+        # were stored (the switch) or that the panel authored itself (the boot
+        # and template Configs), so those are rendered and applied as-is.
+        validate_rendered_config(runtime_bytes)
 
     previous_source = source_target.read_bytes() if source_target.is_file() else None
     previous_runtime = runtime_target.read_bytes() if runtime_target.is_file() else None
