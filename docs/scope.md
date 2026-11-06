@@ -23,7 +23,7 @@
 ### 服务控制（Service Control）
 
 - 启动 / 停止 / 重启；内核意外退出按指数退避自动拉起（基数 `CLASHFLOW_RESPAWN_BASE_DELAY`，默认 1 s），连续 5 次失败转 `degraded` 并停止自动拉起，手动 Start 恢复。
-- 内核版本默认取镜像基线（Image Baseline）；换版本只能走运行时更新（Runtime Update，见 ADR-0003）——面板「系统」页手动安装，不做自动升级。内核自带的 `/restart`、`/upgrade` 不开放：面板的反代在转发前就拒绝它们（`403`），它们按进程原始 `-f` 重启，会与当前配置脱节。
+- 内核版本默认取镜像基线（Image Baseline）；换版本只能走运行时更新（Runtime Update，见 ADR-0003）——面板「系统」页手动安装，不做自动升级。内核自带的 `/restart`、`/upgrade` 不开放，控制接口自己的 `PUT /configs` 也不开放：面板的反代在转发前就拒绝它们（`403`）——前两个按进程原始 `-f` 重启，会与当前配置脱节；后者绕过面板的校验与原子替换，直接改内核在跑的配置路径。
 - GEO 自动更新由内核内置调度负责，且**只在配置里写了 `geo-auto-update` 时生效**——订阅内容没写，面板不会替你补。
 
 ### 运行面板（Runtime Dashboard）
