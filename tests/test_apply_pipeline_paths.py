@@ -8,12 +8,25 @@ Config file byte-identical, and the Kernel still serving what it served
 before.
 """
 
+import httpx
 from conftest import origin_server
 
 from clashflow import apply as apply_module
 from clashflow.apply import HotApplyError
+from clashflow.kernel import CONTROLLER_ADDR
 
 SUB_V1 = b"mixed-port: 7892\nallow-lan: true\n"
+
+
+async def _served_configs(secret: str) -> dict:
+    """What the running Kernel actually serves, read from the Controller."""
+    async with httpx.AsyncClient() as controller:
+        resp = await controller.get(
+            f"http://{CONTROLLER_ADDR}/configs",
+            headers={"Authorization": f"Bearer {secret}"},
+        )
+        assert resp.status_code == 200
+        return resp.json()
 
 
 async def test_every_write_path_answers_a_refused_reload_the_same_way(
@@ -54,6 +67,8 @@ async def test_every_write_path_answers_a_refused_reload_the_same_way(
         assert alt.read_bytes() == alt_before
         health = (await panel.client.get("/api/service/health")).json()
         assert health["active_config"] == "default"
+        assert (await _served_configs(panel.app.state.secret))["mixed-port"] == 7890
+        assert (await _served_configs(panel.app.state.secret))["mixed-port"] == 7890
 
         # Refresh: same restore rule, reached through the Subscription path.
         monkeypatch.setattr("clashflow.apply.hot_apply", real_hot_apply)
@@ -70,6 +85,7 @@ async def test_every_write_path_answers_a_refused_reload_the_same_way(
             resp = await panel.client.post("/api/panel/subscriptions/prov/refresh")
             assert (resp.status_code, resp.json()["detail"]) == (502, "forced hot-apply failure")
             assert prov.read_bytes() == prov_before
+            assert (await _served_configs(panel.app.state.secret))["mixed-port"] == 7892
 
 
 async def test_a_kernel_that_dies_during_validation_stores_the_bytes_without_a_reload(
@@ -83,19 +99,20 @@ async def test_a_kernel_that_dies_during_validation_stores_the_bytes_without_a_r
     async with boot_app() as panel:
         kernel = panel.app.state.kernel
         target = panel.data_dir / "configs" / "default.yaml"
-        alive = {"now": True}
         real_validate = apply_module.validate_config
 
         async def validate_then_die(*args, **kwargs):
             await real_validate(*args, **kwargs)
-            alive["now"] = False
+            # The Kernel goes away inside the validation window. `stop()` is the
+            # public way to make it not-alive, and it parks the supervisor, so
+            # this test observes a dead Kernel instead of racing a respawn.
+            kernel.stop()
 
         async def must_not_reload(*args, **kwargs):
             raise AssertionError("a dead Kernel must not be asked to reload")
 
         monkeypatch.setattr(apply_module, "validate_config", validate_then_die)
         monkeypatch.setattr("clashflow.apply.hot_apply", must_not_reload)
-        monkeypatch.setattr(type(kernel), "alive", lambda self: alive["now"])
 
         resp = await panel.client.put(
             "/api/panel/configs/default", content="mixed-port: 7891\nallow-lan: true\n"
