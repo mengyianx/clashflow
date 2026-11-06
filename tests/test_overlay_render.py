@@ -245,6 +245,25 @@ async def test_switching_the_active_config_renders_the_target_and_hot_applies_it
         assert configs["log-level"] == "debug"
 
 
+async def test_the_kernel_is_never_started_with_a_missing_runtime_config(boot_app) -> None:
+    """mihomo auto-creates a default Config when `-f` names a missing file.
+    With a broken Source Config and no Runtime artifact, starting the Kernel
+    would silently run defaults; the spawn is refused instead."""
+    async with boot_app() as panel:
+        runtime = panel.data_dir / "runtime-configs" / "default.yaml"
+        source = panel.data_dir / "configs" / "default.yaml"
+        kernel = panel.app.state.kernel
+
+        kernel.stop()
+        runtime.unlink()
+        source.write_text("proxies: [\n")  # render fails: no artifact is rebuilt
+
+        resp = await panel.client.post("/api/service/start")
+        assert resp.status_code == 200
+        assert resp.json()["kernel"] == "down"
+        assert not runtime.exists()
+
+
 def test_rendering_is_deterministic_for_the_same_source_and_overlay() -> None:
     source = b"mixed-port: 7890\nrules:\n  - MATCH,DIRECT\n"
     overlay = {"log-level": "debug", "dns": {"nameserver": ["1.1.1.1"]}}

@@ -1,15 +1,17 @@
 """Subscription fetch pipeline (plan §5, flow 3): GET the Subscription URL
 with a custom user agent and timeout, then run the fetched bytes through the
-shared apply pipeline (`mihomo -t` validation + atomic swap), hot-applying
-when the target is the Active Config.
+shared apply pipeline (render, `mihomo -t` on the rendered bytes, atomic
+writes of both files), hot-applying when the target is the Active Config.
 
-Failure classes — the three the panel distinguishes (spec issue #6, #27), each
+Failure classes — the four the panel distinguishes (spec issue #6, #27), each
 raising a distinct exception that the API layer maps to a status code:
 - `network` (transport failure or non-2xx response) -> SubscriptionFetchError
-- `kernel-rejected`: content that is not a complete mihomo YAML Config
-  (unparseable YAML OR semantically invalid) -> KernelRejected, carrying the
-  Kernel's own output verbatim; both cases go through `mihomo -t`, the single
-  write-path validator
+- `render-failed`: the fetched bytes cannot be rendered (unparseable YAML or a
+  non-mapping document), refused by the key-merge stage -> RenderFailed, whose
+  message begins with the stage name
+- `kernel-rejected`: the RENDERED Config is not a complete mihomo YAML, so the
+  Kernel's config-test refuses it -> KernelRejected, carrying the Kernel's own
+  output verbatim
 - `hot-apply-refused`: Controller refusal on the Active-Config hot-apply ->
   HotApplyError
 
@@ -127,10 +129,10 @@ REFRESH_FAILURES = (SubscriptionFetchError, RenderFailed, KernelRejected, HotApp
 
 # The failure class of a failed refresh (ticket #27): the named class travels
 # with the raw error text from the shared dispatch below to the panel, so a
-# self-hoster can tell a provider outage from a Kernel refusal without
-# reading English Kernel output. There is deliberately no invalid-YAML class:
-# the Kernel is the only write-path validator, so unparseable content is a
-# config-test refusal like any other.
+# self-hoster can tell a provider outage from a render or Kernel refusal
+# without reading English output. Unparseable YAML is its own class
+# (`render-failed`): the render pipeline's key-merge stage parses the bytes
+# before the Kernel ever sees a document.
 FAILURE_CLASS_NETWORK = "network"
 FAILURE_CLASS_RENDER_FAILED = "render-failed"
 FAILURE_CLASS_KERNEL_REJECTED = "kernel-rejected"
@@ -138,7 +140,7 @@ FAILURE_CLASS_HOT_APPLY_REFUSED = "hot-apply-refused"
 
 
 def failure_class_for(exc: Exception) -> str | None:
-    """The failure class of a refresh failure: the named class of the three
+    """The failure class of a refresh failure: the named class of the four
     pipeline failures, or None for a failure outside the pipeline (e.g. a
     vanished Config registration) — such a record keeps its raw text and
     claims no class."""
